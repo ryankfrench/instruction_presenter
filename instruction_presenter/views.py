@@ -1,8 +1,46 @@
-from django.http import HttpResponseBadRequest
+from urllib.parse import urlencode
+from uuid import UUID
+
+from django.http import HttpResponseBadRequest, HttpResponseRedirect
 from django.shortcuts import render
 
 from instruction_presenter.manifest import current_pdf_url, ensure_manifest
 from instruction_presenter.session_state import get_current_page_sync
+
+# Demo: Dutch sealed first PDFs on chapman static (shared session for staff + subject).
+_DEMO_DUTCH_SEALED_SESSION = UUID('a1b2c3d4-e5f6-4789-a012-3456789abcde')
+_DEMO_DUTCH_SEALED_PLAYER = UUID('b2c3d4e5-f6a7-4890-b123-456789abcdef')
+_DEMO_DUTCH_SEALED_BASE = (
+    'https://chapman-experiments-r1.azurewebsites.net/static/dutch_sealed_first/'
+)
+_DEMO_DUTCH_SEALED_COMPLETE = 'https://chapman-experiments-r1.azurewebsites.net/'
+
+
+def _demo_dutch_sealed_first_query() -> str:
+    return urlencode(
+        [
+            ('base_url', _DEMO_DUTCH_SEALED_BASE),
+            ('f', 'page001.pdf'),
+            ('f', 'page002.pdf'),
+            ('complete_url', _DEMO_DUTCH_SEALED_COMPLETE),
+            ('staff_complete_url', _DEMO_DUTCH_SEALED_COMPLETE),
+        ]
+    )
+
+
+def demo_dutch_sealed_first_staff(request):
+    q = _demo_dutch_sealed_first_query()
+    return HttpResponseRedirect(
+        f'/instructions/{_DEMO_DUTCH_SEALED_SESSION}/staff/?{q}'
+    )
+
+
+def demo_dutch_sealed_first_subject(request):
+    q = _demo_dutch_sealed_first_query()
+    return HttpResponseRedirect(
+        f'/instructions/{_DEMO_DUTCH_SEALED_SESSION}/subject/'
+        f'{_DEMO_DUTCH_SEALED_PLAYER}/?{q}'
+    )
 
 
 def staff_home(request, session_id):

@@ -10,10 +10,37 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def _hosts_from_env(var_name: str) -> list[str]:
+    """Comma-separated hostnames; whitespace trimmed; empty entries dropped."""
+    raw = os.environ.get(var_name, '')
+    if not raw:
+        return []
+    return [h.strip() for h in raw.split(',') if h.strip()]
+
+
+def _allowed_hosts_from_environment() -> list[str]:
+    """
+    ALLOWED_HOSTS env: comma-separated list (e.g. app.azurewebsites.net,custom.domain).
+    On Azure App Service, WEBSITE_HOSTNAME is appended if not already listed.
+    """
+    hosts: list[str] = []
+    seen: set[str] = set()
+    for h in _hosts_from_env('ALLOWED_HOSTS'):
+        key = h.lower()
+        if key not in seen:
+            seen.add(key)
+            hosts.append(h)
+    website = os.environ.get('WEBSITE_HOSTNAME', '').strip()
+    if website and website.lower() not in seen:
+        hosts.append(website)
+    return hosts
 
 
 # Quick-start development settings - unsuitable for production
@@ -25,7 +52,13 @@ SECRET_KEY = 'django-insecure-(7*4^8zs@bf%!lwjgeb=_2^(lp9t&^td$*0um9^b4p&16^n7z8
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', '[::1]']
+_env_allowed = _allowed_hosts_from_environment()
+if _env_allowed:
+    ALLOWED_HOSTS = _env_allowed
+elif DEBUG:
+    ALLOWED_HOSTS = ['localhost', '127.0.0.1', '[::1]']
+else:
+    ALLOWED_HOSTS = []
 
 
 # Application definition
@@ -90,11 +123,15 @@ CACHES = {
 # Seconds to keep instruction manifest (base_url, file list, redirect URLs).
 INSTRUCTION_MANIFEST_TTL = 86400
 
-# Hosts allowed in complete_url / staff_complete_url (defaults: ALLOWED_HOSTS / DEBUG).
-# INSTRUCTION_REDIRECT_ALLOWED_HOSTS = ['example.com']
+# Hosts allowed in complete_url / staff_complete_url (comma-separated env).
+# If unset, manifest.redirect_allowed_hosts() falls back to ALLOWED_HOSTS.
+_redirect_env = _hosts_from_env('INSTRUCTION_REDIRECT_ALLOWED_HOSTS')
+INSTRUCTION_REDIRECT_ALLOWED_HOSTS = _redirect_env if _redirect_env else None
 
 # If True, only https: redirects are accepted (ignored for relative URLs).
-INSTRUCTION_REDIRECT_REQUIRE_HTTPS = False
+INSTRUCTION_REDIRECT_REQUIRE_HTTPS = os.environ.get(
+    'INSTRUCTION_REDIRECT_REQUIRE_HTTPS', ''
+).strip().lower() in ('1', 'true', 'yes')
 
 
 # Database
@@ -148,3 +185,9 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Optional overrides (not in repo): must run last so ALLOWED_HOSTS / DEBUG / etc. win.
+try:
+    from .local_settings import *  # noqa: F403, E402
+except ImportError:
+    pass
