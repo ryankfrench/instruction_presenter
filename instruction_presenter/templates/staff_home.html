@@ -1,0 +1,190 @@
+{% extends "instruction_base.html" %}
+{% load static %}
+
+{% block head %}
+<style>
+html, body {
+    height: 100%;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+}
+.container {
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+}
+.content {
+    flex: 0 1 auto;
+}
+.pdf-viewer-container {
+    flex: 1 1 auto;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+}
+#pdf-viewer {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+#pdf-viewer canvas {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row text-center content">
+        <h1>Page {{ current_page }}</h1>
+    </div>
+    <div class="row my-3 content">
+        <div class="col text-start">
+            <button id="prev-btn" class="btn btn-primary" {% if current_page <= 1 %}disabled{% endif %}>
+                &larr; Previous
+            </button>
+        </div>
+        <div class="col text-center">
+            <button id="read-aloud-btn" class="btn btn-secondary">Read Aloud</button>
+        </div>
+        <div class="col text-end">
+            <button id="next-btn" class="btn btn-primary" {% if current_page >= total_pages %}disabled{% endif %}>
+                Next &rarr;
+            </button>
+        </div>
+    </div>
+    <div class="row my-3 content">
+        <div class="col text-end">
+            <button id="end-instructions-btn" class="btn btn-danger">End Instructions</button>
+        </div>
+    </div>
+    <div class="row pdf-viewer-container">
+        <div class="col">
+            <div id="pdf-viewer"></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block tail %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.7.570/pdf.min.js"></script>
+<script>
+    const sessionId = "{{ session_id }}";
+    const ws_scheme = window.location.protocol === "https:" ? "wss" : "ws";
+    const socket = new WebSocket(`${ws_scheme}://${window.location.host}/ws/instructions/${sessionId}/`);
+
+    socket.onmessage = function(e) {
+        const data = JSON.parse(e.data);
+        if (data.type === 'update_page') {
+            window.location.reload();
+        } else if (data.type === 'end_instructions') {
+            const staffUrl = data.staff_complete_url;
+            if (staffUrl) {
+                window.location.href = staffUrl;
+            } else {
+                window.close();
+            }
+        } else if (data.type === 'end_instructions_failed') {
+            const end_button = document.getElementById('end-instructions-btn');
+            end_button.disabled = false;
+            end_button.innerText = 'End Instructions';
+        }
+    };
+
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.7.570/pdf.worker.min.js';
+
+    const pdfViewer = document.getElementById('pdf-viewer');
+    const readAloudButton = document.getElementById('read-aloud-btn');
+
+    pdfjsLib.getDocument('{{ current_pdf|escapejs }}').promise.then(pdf => {
+        pdf.getPage(1).then(page => {
+            const viewport = page.getViewport({ scale: 3 });
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+
+            pdfViewer.appendChild(canvas);
+
+            const renderContext = {
+                canvasContext: context,
+                viewport: viewport
+            };
+            page.render(renderContext);
+
+            page.getTextContent().then(textContent => {
+                const text = textContent.items.map(item => item.str).join(' ');
+                readAloudButton.addEventListener('click', () => {
+                    readAloud(text);
+                });
+            });
+        });
+    });
+
+    function readAloud(text) {
+        const speechSynthesis = window.speechSynthesis;
+        const voiceName = 'Google US English';
+        let voices = [];
+        let utteranceIndex = 0;
+        let isSpeaking = false;
+
+        const splitIntoSentences = (t) => {
+            const sentenceRegex = /(?<!\d)\.(?!\d)|[!?]/g;
+            return t.split(sentenceRegex).map(s => s.trim()).filter(s => s.length > 0);
+        };
+
+        const speakSentence = (sentence) => {
+            const utterance = new SpeechSynthesisUtterance(sentence);
+            const selectedVoice = voices.find(voice => voice.name === voiceName);
+            if (selectedVoice) {
+                utterance.voice = selectedVoice;
+            }
+            utterance.onend = () => {
+                isSpeaking = false;
+                if (++utteranceIndex < sentences.length) {
+                    speakSentence(sentences[utteranceIndex]);
+                }
+            };
+            utterance.onerror = (err) => console.error('Speech synthesis error:', err);
+            isSpeaking = true;
+            speechSynthesis.speak(utterance);
+        };
+
+        const sentences = splitIntoSentences(text);
+
+        const setVoice = () => {
+            voices = speechSynthesis.getVoices();
+            if (sentences.length > 0 && !isSpeaking) {
+                speakSentence(sentences[utteranceIndex]);
+            }
+        };
+
+        if (speechSynthesis.onvoiceschanged !== undefined) {
+            speechSynthesis.onvoiceschanged = setVoice;
+        } else {
+            setVoice();
+        }
+    }
+
+    document.getElementById('prev-btn').addEventListener('click', function() {
+        socket.send(JSON.stringify({ action: 'previous_page' }));
+    });
+
+    document.getElementById('next-btn').addEventListener('click', function() {
+        socket.send(JSON.stringify({ action: 'next_page' }));
+    });
+
+    const end_button = document.getElementById('end-instructions-btn');
+    end_button.addEventListener('click', function() {
+        end_button.disabled = true;
+        end_button.innerText = 'Processing...';
+        socket.send(JSON.stringify({ action: 'end_instructions' }));
+    });
+</script>
+{% endblock %}

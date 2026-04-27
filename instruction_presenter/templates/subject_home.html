@@ -1,0 +1,115 @@
+{% extends "instruction_base.html" %}
+{% load static %}
+
+{% block head %}
+<style>
+html, body {
+    height: 100%;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+}
+.container {
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+}
+.content {
+    flex: 0 1 auto;
+}
+.pdf-viewer-container {
+    flex: 1 1 auto;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+}
+#pdf-viewer {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+#pdf-viewer canvas {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row text-center content">
+        <h1>Page {{ current_page }}</h1>
+    </div>
+    <div class="row pdf-viewer-container">
+        <div class="col">
+            <div id="pdf-viewer"></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block tail %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.7.570/pdf.min.js"></script>
+<script>
+    const sessionId = "{{ session_id }}";
+    const playerKey = "{{ player_key }}";
+    const ws_scheme = window.location.protocol === "https:" ? "wss" : "ws";
+
+    let isPageChange = false;
+
+    function connectWebSocket() {
+        const socket = new WebSocket(`${ws_scheme}://${window.location.host}/ws/instructions/${sessionId}/${playerKey}/`);
+
+        socket.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            if (data.type === 'update_page') {
+                isPageChange = true;
+                window.location.reload();
+            } else if (data.type === 'end_instructions') {
+                isPageChange = true;
+                window.location.href = data.redirect_link;
+            }
+        };
+
+        socket.onerror = function(error) {
+            console.error('WebSocket Error:', error);
+        };
+
+        socket.onclose = function() {
+            if (!isPageChange) {
+                setTimeout(connectWebSocket, 1000);
+            }
+        };
+
+        return socket;
+    }
+
+    connectWebSocket();
+
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.7.570/pdf.worker.min.js';
+
+    const pdfViewer = document.getElementById('pdf-viewer');
+
+    pdfjsLib.getDocument('{{ current_pdf|escapejs }}').promise.then(pdf => {
+        pdf.getPage(1).then(page => {
+            const viewport = page.getViewport({ scale: 3 });
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+
+            pdfViewer.appendChild(canvas);
+
+            const renderContext = {
+                canvasContext: context,
+                viewport: viewport
+            };
+            page.render(renderContext);
+        });
+    });
+</script>
+{% endblock %}
