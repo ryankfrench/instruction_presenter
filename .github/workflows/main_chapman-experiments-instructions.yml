@@ -67,4 +67,4 @@ jobs:
         with:
           app-name: 'chapman-experiments-instructions'
           slot-name: 'Production'
-          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_392FFDB1F84444A48BCED1D2CB13D170 }}
+          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_9B1C21122F72413BB0FA9489128B3BDA }}
