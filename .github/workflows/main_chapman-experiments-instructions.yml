@@ -2,12 +2,9 @@
 # More GitHub Actions for Azure: https://github.com/Azure/actions
 # More info on Python, GitHub Actions, and Azure App Service: https://aka.ms/python-webapps-actions
 #
-# WebSockets (Django Channels): Azure MUST NOT use Oryx auto-detected Gunicorn (config.wsgi).
-# In Portal → App Service → Configuration → General settings:
-#   • Web sockets = On
-#   • Startup Command = bash startup.sh
-# Log stream should show "*** instruction_presenter: starting Daphne ***", not "Generating gunicorn".
-# Redis/channel layers are unrelated to fixing WS 404 under Gunicorn; use Daphne first.
+# WebSockets (Django Channels): In Azure Portal → App Service → Configuration → General settings,
+# set Web sockets = On and Startup Command to: bash startup.sh
+# (Default gunicorn + WSGI cannot upgrade WebSockets; startup.sh runs Daphne + ASGI.)
 
 name: Build and deploy Python app to Azure Web App - chapman-experiments-instructions
 
