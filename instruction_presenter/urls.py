@@ -6,6 +6,16 @@ app_name = 'instruction_presenter'
 
 urlpatterns = [
     path(
+        'demo/staff/',
+        views.demo_staff,
+        name='demo_staff',
+    ),
+    path(
+        'demo/subject/',
+        views.demo_subject,
+        name='demo_subject',
+    ),
+    path(
         'demo/dutch-sealed-first/staff/',
         views.demo_dutch_sealed_first_staff,
         name='demo_dutch_sealed_staff',
