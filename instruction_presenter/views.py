@@ -13,7 +13,9 @@ _DEMO_DUTCH_SEALED_PLAYER = UUID('b2c3d4e5-f6a7-4890-b123-456789abcdef')
 _DEMO_DUTCH_SEALED_BASE = (
     'https://chapman-experiments-r1.azurewebsites.net/static/dutch_sealed_first/'
 )
-_DEMO_DUTCH_SEALED_COMPLETE = 'https://chapman-experiments-r1.azurewebsites.net/'
+# Same-origin path so redirect validation passes when ALLOWED_HOSTS is only this app.
+# For absolute URLs to another host, add that host to INSTRUCTION_REDIRECT_ALLOWED_HOSTS.
+_DEMO_DUTCH_SEALED_COMPLETE = '/'
 
 
 def _demo_dutch_sealed_first_query() -> str:
