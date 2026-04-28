@@ -50,8 +50,11 @@ html, body {
                 &larr; Previous
             </button>
         </div>
-        <div class="col text-center">
-            <button id="read-aloud-btn" class="btn btn-secondary">Read Aloud</button>
+        <div class="col text-center d-flex justify-content-center align-items-center gap-2 flex-wrap">
+            <select id="tts-voice-select" class="form-select" style="max-width: min(100%, 22rem);" aria-label="Text-to-speech voice">
+                <option value="">Default (system)</option>
+            </select>
+            <button id="read-aloud-btn" type="button" class="btn btn-secondary">Read Aloud</button>
         </div>
         <div class="col text-end">
             <button id="next-btn" class="btn btn-primary" {% if current_page >= total_pages %}disabled{% endif %}>
@@ -101,6 +104,51 @@ html, body {
 
     const pdfViewer = document.getElementById('pdf-viewer');
     const readAloudButton = document.getElementById('read-aloud-btn');
+    const voiceSelect = document.getElementById('tts-voice-select');
+    const TTS_VOICE_STORAGE_KEY = 'instruction_presenter_tts_voice_uri';
+
+    function populateTtsVoiceSelect() {
+        if (!voiceSelect || !('speechSynthesis' in window)) return;
+        const voices = window.speechSynthesis.getVoices();
+        if (voices.length === 0) return;
+
+        const previousValue = voiceSelect.value;
+        const savedUri = localStorage.getItem(TTS_VOICE_STORAGE_KEY);
+
+        voiceSelect.innerHTML = '<option value="">Default (system)</option>';
+        const sorted = [...voices].sort((a, b) => {
+            const langCmp = a.lang.localeCompare(b.lang);
+            if (langCmp !== 0) return langCmp;
+            return a.name.localeCompare(b.name);
+        });
+        sorted.forEach((voice) => {
+            const opt = document.createElement('option');
+            opt.value = voice.voiceURI;
+            opt.textContent = `${voice.name} (${voice.lang})`;
+            voiceSelect.appendChild(opt);
+        });
+
+        if (savedUri !== null && (savedUri === '' || sorted.some((v) => v.voiceURI === savedUri))) {
+            voiceSelect.value = savedUri;
+        } else if (sorted.some((v) => v.voiceURI === previousValue)) {
+            voiceSelect.value = previousValue;
+        } else {
+            const preferred =
+                sorted.find((v) => v.lang === 'en-US' && /Google|Microsoft|Natural/i.test(v.name)) ||
+                sorted.find((v) => v.lang.startsWith('en')) ||
+                sorted[0];
+            if (preferred) voiceSelect.value = preferred.voiceURI;
+        }
+    }
+
+    if ('speechSynthesis' in window) {
+        window.speechSynthesis.addEventListener('voiceschanged', populateTtsVoiceSelect);
+        populateTtsVoiceSelect();
+    }
+
+    voiceSelect.addEventListener('change', () => {
+        localStorage.setItem(TTS_VOICE_STORAGE_KEY, voiceSelect.value);
+    });
 
     pdfjsLib.getDocument('{{ current_pdf|escapejs }}').promise.then(pdf => {
         pdf.getPage(1).then(page => {
@@ -128,47 +176,46 @@ html, body {
     });
 
     function readAloud(text) {
+        if (!('speechSynthesis' in window)) return;
+
         const speechSynthesis = window.speechSynthesis;
-        const voiceName = 'Google US English';
-        let voices = [];
+        speechSynthesis.cancel();
+
+        const selectedUri = voiceSelect && voiceSelect.value;
         let utteranceIndex = 0;
-        let isSpeaking = false;
 
         const splitIntoSentences = (t) => {
             const sentenceRegex = /(?<!\d)\.(?!\d)|[!?]/g;
             return t.split(sentenceRegex).map(s => s.trim()).filter(s => s.length > 0);
         };
 
+        const sentences = splitIntoSentences(text);
+        if (sentences.length === 0) return;
+
         const speakSentence = (sentence) => {
             const utterance = new SpeechSynthesisUtterance(sentence);
-            const selectedVoice = voices.find(voice => voice.name === voiceName);
-            if (selectedVoice) {
-                utterance.voice = selectedVoice;
+            if (selectedUri) {
+                const selectedVoice = speechSynthesis.getVoices().find((v) => v.voiceURI === selectedUri);
+                if (selectedVoice) utterance.voice = selectedVoice;
             }
             utterance.onend = () => {
-                isSpeaking = false;
                 if (++utteranceIndex < sentences.length) {
                     speakSentence(sentences[utteranceIndex]);
                 }
             };
             utterance.onerror = (err) => console.error('Speech synthesis error:', err);
-            isSpeaking = true;
             speechSynthesis.speak(utterance);
         };
 
-        const sentences = splitIntoSentences(text);
-
-        const setVoice = () => {
-            voices = speechSynthesis.getVoices();
-            if (sentences.length > 0 && !isSpeaking) {
-                speakSentence(sentences[utteranceIndex]);
-            }
+        const kickoff = () => {
+            utteranceIndex = 0;
+            speakSentence(sentences[0]);
         };
 
-        if (speechSynthesis.onvoiceschanged !== undefined) {
-            speechSynthesis.onvoiceschanged = setVoice;
+        if (speechSynthesis.getVoices().length > 0) {
+            kickoff();
         } else {
-            setVoice();
+            speechSynthesis.addEventListener('voiceschanged', kickoff, { once: true });
         }
     }
 
