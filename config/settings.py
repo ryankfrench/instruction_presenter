@@ -60,6 +60,11 @@ elif DEBUG:
 else:
     ALLOWED_HOSTS = []
 
+# Azure App Service (and similar proxies): correct scheme/host for Channels / TLS.
+if os.environ.get('WEBSITE_INSTANCE_ID'):
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    USE_X_FORWARDED_HOST = True
+
 
 # Application definition
 

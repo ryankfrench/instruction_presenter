@@ -1,6 +1,10 @@
 # Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
 # More GitHub Actions for Azure: https://github.com/Azure/actions
 # More info on Python, GitHub Actions, and Azure App Service: https://aka.ms/python-webapps-actions
+#
+# WebSockets (Django Channels): In Azure Portal → App Service → Configuration → General settings,
+# set Web sockets = On and Startup Command to: bash startup.sh
+# (Default gunicorn + WSGI cannot upgrade WebSockets; startup.sh runs Daphne + ASGI.)
 
 name: Build and deploy Python app to Azure Web App - chapman-experiments-instructions
 
