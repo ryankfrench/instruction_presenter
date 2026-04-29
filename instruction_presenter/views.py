@@ -5,9 +5,12 @@ from django.http import HttpResponseBadRequest, HttpResponseRedirect, QueryDict
 from django.shortcuts import render
 
 from instruction_presenter.manifest import (
+    DEMO_SUBJECT_DEFAULT_COMPLETE_URL,
     build_manifest_from_query,
     current_pdf_url,
     ensure_manifest,
+    set_subject_completion_url,
+    subject_completion_overlay_allowed,
 )
 from instruction_presenter.session_state import get_current_page_sync
 
@@ -121,8 +124,23 @@ def demo_staff(request):
 
 
 def demo_subject(request):
-    """Same manifest as demo_staff; opens the subject view for the shared demo session."""
-    return _demo_param_redirect_response(request, subject=True)
+    """
+    Opens the parameterized demo subject view. Omit complete_url to use the default
+    (Google); override with complete_url=. The instruction list comes from the shared
+    session cache after staff has loaded demo staff with base_url and page_count, etc.
+    """
+    raw = (request.GET.get('complete_url') or '').strip()
+    complete_url = raw or DEMO_SUBJECT_DEFAULT_COMPLETE_URL
+    if not subject_completion_overlay_allowed(complete_url):
+        return HttpResponseBadRequest(
+            'Invalid complete_url (must be an allowed host for redirects '
+            'or the canonical demo URL).'
+        )
+    q = urlencode([('complete_url', complete_url)])
+    return HttpResponseRedirect(
+        f'/instructions/{_DEMO_PARAM_SESSION}/subject/'
+        f'{_DEMO_PARAM_PLAYER}/?{q}'
+    )
 
 
 def demo_dutch_sealed_first_staff(request):
@@ -164,9 +182,13 @@ def subject_home(request, session_id, player_key):
     if not manifest or manifest.total_pages == 0:
         return HttpResponseBadRequest(
             'Unknown or expired instruction session. '
-            'Use the same query parameters as staff, or open staff first.'
+            'Open staff with the manifest first, or use the full parameter set.'
         )
     sid = str(session_id)
+    pk = str(player_key)
+    overlay = (request.GET.get('complete_url') or '').strip()
+    if overlay and subject_completion_overlay_allowed(overlay):
+        set_subject_completion_url(sid, pk, overlay)
     page = min(max(get_current_page_sync(sid), 1), manifest.total_pages)
     context = {
         'session_id': sid,

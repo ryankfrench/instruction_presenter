@@ -1,6 +1,12 @@
 import json
 
+from asgiref.sync import sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
+
+from instruction_presenter.manifest import (
+    clear_subject_completion_url,
+    get_subject_completion_url,
+)
 
 
 class SubjectConsumer(AsyncWebsocketConsumer):
@@ -30,7 +36,10 @@ class SubjectConsumer(AsyncWebsocketConsumer):
         )
 
     async def end_instructions(self, event):
-        complete_url = event.get('complete_url') or ''
+        overlay = await sync_to_async(get_subject_completion_url)(
+            self.session_id, self.player_key
+        )
+        complete_url = overlay or event.get('complete_url') or ''
         await self.send(
             text_data=json.dumps(
                 {
@@ -38,4 +47,7 @@ class SubjectConsumer(AsyncWebsocketConsumer):
                     'redirect_link': complete_url,
                 }
             )
+        )
+        await sync_to_async(clear_subject_completion_url)(
+            self.session_id, self.player_key
         )

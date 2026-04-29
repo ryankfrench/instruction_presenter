@@ -16,6 +16,24 @@ def manifest_cache_key(session_id: str) -> str:
     return f'instruction_manifest:{session_id}'
 
 
+def subject_completion_cache_key(session_id: str, player_key: str) -> str:
+    return f'instruction_subject_complete:{session_id}:{player_key}'
+
+
+def set_subject_completion_url(session_id: str, player_key: str, url: str) -> None:
+    """Per-subject completion redirect; used when subjects open with complete_url overlay only."""
+    ttl = getattr(settings, 'INSTRUCTION_MANIFEST_TTL', 86400)
+    cache.set(subject_completion_cache_key(session_id, player_key), url, ttl)
+
+
+def get_subject_completion_url(session_id: str, player_key: str) -> str | None:
+    return cache.get(subject_completion_cache_key(session_id, player_key))
+
+
+def clear_subject_completion_url(session_id: str, player_key: str) -> None:
+    cache.delete(subject_completion_cache_key(session_id, player_key))
+
+
 @dataclass(frozen=True)
 class InstructionManifest:
     base_url: str
@@ -57,6 +75,17 @@ def is_safe_redirect_url(url: str) -> bool:
         allowed_hosts=redirect_allowed_hosts(),
         require_https=require_https_redirects(),
     )
+
+
+# Canonical default for parameterized /demo/subject/ when complete_url is omitted.
+DEMO_SUBJECT_DEFAULT_COMPLETE_URL = 'https://www.google.com/'
+
+
+def subject_completion_overlay_allowed(url: str) -> bool:
+    """Redirects from subject links: full validation, plus trusted demo fallback URL."""
+    if url == DEMO_SUBJECT_DEFAULT_COMPLETE_URL:
+        return True
+    return is_safe_redirect_url(url)
 
 
 def has_manifest_params(query: QueryDict) -> bool:
