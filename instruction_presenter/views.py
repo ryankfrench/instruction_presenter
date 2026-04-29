@@ -5,10 +5,10 @@ from django.http import HttpResponseBadRequest, HttpResponseRedirect, QueryDict
 from django.shortcuts import render
 
 from instruction_presenter.manifest import (
-    DEMO_SUBJECT_DEFAULT_COMPLETE_URL,
     build_manifest_from_query,
     current_pdf_url,
     ensure_manifest,
+    get_cached_manifest,
     set_subject_completion_url,
     subject_completion_overlay_allowed,
 )
@@ -125,22 +125,23 @@ def demo_staff(request):
 
 def demo_subject(request):
     """
-    Opens the parameterized demo subject view. Omit complete_url to use the default
-    (Google); override with complete_url=. The instruction list comes from the shared
-    session cache after staff has loaded demo staff with base_url and page_count, etc.
+    Opens the parameterized demo subject view. Subjects need not pass complete_url
+    here (the manifest from staff supplies completion when instructions end). Optional
+    complete_url= overrides the per-subject redirect when instructions end.
     """
     raw = (request.GET.get('complete_url') or '').strip()
-    complete_url = raw or DEMO_SUBJECT_DEFAULT_COMPLETE_URL
-    if not subject_completion_overlay_allowed(complete_url):
+    path = (
+        f'/instructions/{_DEMO_PARAM_SESSION}/subject/'
+        f'{_DEMO_PARAM_PLAYER}/'
+    )
+    if not raw:
+        return HttpResponseRedirect(path)
+    if not subject_completion_overlay_allowed(raw):
         return HttpResponseBadRequest(
             'Invalid complete_url (must be an allowed host for redirects '
             'or the canonical demo URL).'
         )
-    q = urlencode([('complete_url', complete_url)])
-    return HttpResponseRedirect(
-        f'/instructions/{_DEMO_PARAM_SESSION}/subject/'
-        f'{_DEMO_PARAM_PLAYER}/?{q}'
-    )
+    return HttpResponseRedirect(f'{path}?{urlencode([("complete_url", raw)])}')
 
 
 def demo_dutch_sealed_first_staff(request):
@@ -151,11 +152,19 @@ def demo_dutch_sealed_first_staff(request):
 
 
 def demo_dutch_sealed_first_subject(request):
-    q = _demo_dutch_sealed_first_query()
-    return HttpResponseRedirect(
+    raw = (request.GET.get('complete_url') or '').strip()
+    path = (
         f'/instructions/{_DEMO_DUTCH_SEALED_SESSION}/subject/'
-        f'{_DEMO_DUTCH_SEALED_PLAYER}/?{q}'
+        f'{_DEMO_DUTCH_SEALED_PLAYER}/'
     )
+    if not raw:
+        return HttpResponseRedirect(path)
+    if not subject_completion_overlay_allowed(raw):
+        return HttpResponseBadRequest(
+            'Invalid complete_url (must be an allowed host for redirects '
+            'or the canonical demo URL).'
+        )
+    return HttpResponseRedirect(f'{path}?{urlencode([("complete_url", raw)])}')
 
 
 def staff_home(request, session_id):
@@ -177,18 +186,53 @@ def staff_home(request, session_id):
     return render(request, 'staff_home.html', context)
 
 
+# Sessions where subject_home does not require complete_url (built-in demos).
+_SUBJECT_HOME_OPTIONAL_COMPLETE_URL_SESSIONS = frozenset(
+    {
+        str(_DEMO_PARAM_SESSION),
+        str(_DEMO_DUTCH_SEALED_SESSION),
+    }
+)
+
+
 def subject_home(request, session_id, player_key):
-    manifest = ensure_manifest(request, session_id)
+    sid = str(session_id)
+    pk = str(player_key)
+
+    # Subjects must not pass manifest parameters; staff establishes the PDF list.
+    if set(request.GET.keys()) - {'complete_url'}:
+        return HttpResponseBadRequest(
+            'Subject links only accept complete_url. '
+            'Open staff first so the instruction session is cached.'
+        )
+
+    overlay = (request.GET.get('complete_url') or '').strip()
+    optional_complete = sid in _SUBJECT_HOME_OPTIONAL_COMPLETE_URL_SESSIONS
+    if not optional_complete:
+        if not overlay:
+            return HttpResponseBadRequest(
+                'Missing complete_url. Open your assigned subject link '
+                'including complete_url=….'
+            )
+        if not subject_completion_overlay_allowed(overlay):
+            return HttpResponseBadRequest(
+                'Invalid complete_url (must use an allowed host for redirects).'
+            )
+        set_subject_completion_url(sid, pk, overlay)
+    elif overlay:
+        if not subject_completion_overlay_allowed(overlay):
+            return HttpResponseBadRequest(
+                'Invalid complete_url (must be an allowed host for redirects '
+                'or the canonical demo URL).'
+            )
+        set_subject_completion_url(sid, pk, overlay)
+
+    manifest = get_cached_manifest(sid)
     if not manifest or manifest.total_pages == 0:
         return HttpResponseBadRequest(
             'Unknown or expired instruction session. '
-            'Open staff with the manifest first, or use the full parameter set.'
+            'Staff must open the manifest first so this session is cached.'
         )
-    sid = str(session_id)
-    pk = str(player_key)
-    overlay = (request.GET.get('complete_url') or '').strip()
-    if overlay and subject_completion_overlay_allowed(overlay):
-        set_subject_completion_url(sid, pk, overlay)
     page = min(max(get_current_page_sync(sid), 1), manifest.total_pages)
     context = {
         'session_id': sid,
