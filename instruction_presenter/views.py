@@ -172,8 +172,9 @@ def staff_home(request, session_id):
     if not manifest or manifest.total_pages == 0:
         return HttpResponseBadRequest(
             'Missing or invalid instruction parameters. '
-            'Provide base_url, repeated f= for each PDF in order, and complete_url, '
-            'or open a link that includes them once so the session is cached.'
+            'Provide base_url, repeated f= for each PDF in order '
+            '(optional complete_url; if omitted, base_url/subject-home/ is used), '
+            'or open a link that includes those parameters once so the session is cached.'
         )
     sid = str(session_id)
     page = min(max(get_current_page_sync(sid), 1), manifest.total_pages)
