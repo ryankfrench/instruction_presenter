@@ -130,7 +130,7 @@ def subject_completion_overlay_allowed(url: str) -> bool:
 
 
 def has_manifest_params(query: QueryDict) -> bool:
-    """True when URL has base_url and at least one PDF filename; complete_url is optional."""
+    """True when URL has base_url and at least one PDF filename (f=). complete_url is optional on staff links."""
     return bool(query.get('base_url') and query.getlist('f'))
 
 
@@ -142,7 +142,21 @@ def _base_url_ok(base_url: str) -> bool:
     return base_url.startswith(('http://', 'https://'))
 
 
-def build_manifest_from_query(query: QueryDict) -> InstructionManifest | None:
+def build_manifest_from_query(
+    query: QueryDict,
+    *,
+    allow_default_subject_complete_when_complete_missing: bool = True,
+) -> InstructionManifest | None:
+    """
+    allow_default_subject_complete_when_complete_missing:
+        When True (default), omitted complete_url is filled with base_url/subject-home/
+        and must pass redirect host validation. Used for demo / shared links that may
+        not pass an explicit complete_url.
+
+        When False (staff manifest URL), omitted complete_url is stored as '' and not
+        validated; subjects must still open with complete_url on their link (enforced
+        in subject_home). Staff omits staff_complete_url to mean window.close on end.
+    """
     if not has_manifest_params(query):
         return None
     base_url = (query.get('base_url') or '').strip()
@@ -157,10 +171,12 @@ def build_manifest_from_query(query: QueryDict) -> InstructionManifest | None:
         if not is_safe_redirect_url(complete_raw):
             return None
         complete_url = complete_raw
-    else:
+    elif allow_default_subject_complete_when_complete_missing:
         complete_url = default_complete_url_from_base(base_url)
         if not is_safe_redirect_url(complete_url):
             return None
+    else:
+        complete_url = ''
     if staff_complete and not is_safe_redirect_url(staff_complete):
         return None
     return InstructionManifest(
@@ -208,8 +224,13 @@ def set_cached_manifest(session_id: str, manifest: InstructionManifest) -> None:
 def ensure_manifest(request: HttpRequest, session_id: str) -> InstructionManifest | None:
     """
     Return manifest from query params (and refresh cache) or from cache.
+    Staff may omit complete_url / staff_complete_url; subjects still require
+    complete_url on the subject link (see subject_home).
     """
-    m = build_manifest_from_query(request.GET)
+    m = build_manifest_from_query(
+        request.GET,
+        allow_default_subject_complete_when_complete_missing=False,
+    )
     if m is not None:
         set_cached_manifest(str(session_id), m)
         return m

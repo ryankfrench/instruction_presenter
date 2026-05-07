@@ -173,7 +173,8 @@ def staff_home(request, session_id):
         return HttpResponseBadRequest(
             'Missing or invalid instruction parameters. '
             'Provide base_url, repeated f= for each PDF in order '
-            '(optional complete_url; if omitted, base_url/subject-home/ is used), '
+            '(optional complete_url and staff_complete_url for end-of-session redirects; '
+            'subjects must open their link with complete_url=…), '
             'or open a link that includes those parameters once so the session is cached.'
         )
     sid = str(session_id)
