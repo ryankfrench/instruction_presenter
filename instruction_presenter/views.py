@@ -31,14 +31,11 @@ _DEMO_DUTCH_SEALED_COMPLETE = '/'
 
 
 def _demo_dutch_sealed_first_query() -> str:
-    return urlencode(
-        [
-            ('base_url', _DEMO_DUTCH_SEALED_BASE),
-            ('f', 'page001.pdf'),
-            ('f', 'page002.pdf'),
-            ('complete_url', _DEMO_DUTCH_SEALED_COMPLETE),
-            ('staff_complete_url', _DEMO_DUTCH_SEALED_COMPLETE),
-        ]
+    return _demo_param_query_string(
+        _DEMO_DUTCH_SEALED_BASE,
+        _numbered_page_files(12),
+        _DEMO_DUTCH_SEALED_COMPLETE,
+        _DEMO_DUTCH_SEALED_COMPLETE,
     )
 
 
