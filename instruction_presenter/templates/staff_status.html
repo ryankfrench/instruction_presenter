@@ -47,6 +47,7 @@
                     <th>Player key</th>
                     <th>Connected</th>
                     <th>Connections</th>
+                    <th>Instructions URL</th>
                     <th>Completion URL</th>
                     <th></th>
                 </tr>
@@ -57,6 +58,13 @@
                     <td><code>{{ subject.player_key }}</code></td>
                     <td>{{ subject.connected_label }}</td>
                     <td>{{ subject.connection_count }}</td>
+                    <td class="text-break">
+                        {% if subject.instructions_url %}
+                        <a href="{{ subject.instructions_url }}" target="_blank" rel="noopener">{{ subject.instructions_url }}</a>
+                        {% else %}
+                        —
+                        {% endif %}
+                    </td>
                     <td class="text-break">{{ subject.completion_url|default:"—" }}</td>
                     <td>
                         <button type="button" class="btn btn-sm btn-outline-danger" data-player-key="{{ subject.player_key }}">Close tab</button>
@@ -64,7 +72,7 @@
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="5" class="text-muted">No subjects connected.</td>
+                    <td colspan="6" class="text-muted">No subjects connected.</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -106,7 +114,7 @@
         if (subjects.length === 0) {
             const row = document.createElement("tr");
             const cell = document.createElement("td");
-            cell.colSpan = 5;
+            cell.colSpan = 6;
             cell.className = "text-muted";
             cell.textContent = "No subjects connected.";
             row.appendChild(cell);
@@ -122,6 +130,18 @@
                 whenCell.textContent = subject.connected_label;
                 const countCell = document.createElement("td");
                 countCell.textContent = subject.connection_count;
+                const instructionsCell = document.createElement("td");
+                instructionsCell.className = "text-break";
+                if (subject.instructions_url) {
+                    const link = document.createElement("a");
+                    link.href = subject.instructions_url;
+                    link.target = "_blank";
+                    link.rel = "noopener";
+                    link.textContent = subject.instructions_url;
+                    instructionsCell.appendChild(link);
+                } else {
+                    instructionsCell.textContent = "—";
+                }
                 const urlCell = document.createElement("td");
                 urlCell.className = "text-break";
                 urlCell.textContent = textOrDash(subject.completion_url);
@@ -132,7 +152,7 @@
                 button.textContent = "Close tab";
                 button.dataset.playerKey = subject.player_key;
                 actionCell.appendChild(button);
-                row.append(keyCell, whenCell, countCell, urlCell, actionCell);
+                row.append(keyCell, whenCell, countCell, instructionsCell, urlCell, actionCell);
                 tbody.appendChild(row);
             });
         }

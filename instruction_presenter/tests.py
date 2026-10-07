@@ -112,6 +112,29 @@ class StaffIndexTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Page 1')
 
+    def test_status_page_links_connected_subject_instructions(self):
+        session_id = uuid4()
+        player_key = uuid4()
+        set_cached_manifest(
+            str(session_id),
+            InstructionManifest(
+                base_url='https://localhost/static/deck/',
+                files=('page001.pdf',),
+                complete_url='',
+                staff_complete_url=None,
+            ),
+        )
+        register_subject(str(session_id), str(player_key), 'chan-1')
+        response = self.client.get(
+            reverse('instruction_presenter:staff_status', args=[session_id])
+        )
+        instructions_url = reverse(
+            'instruction_presenter:subject_home',
+            args=[session_id, player_key],
+        )
+        self.assertContains(response, 'Instructions URL')
+        self.assertContains(response, instructions_url)
+
     def test_direct_presenter_link_registers_session(self):
         session_id = uuid4()
         response = self.client.get(
@@ -204,6 +227,11 @@ class StatusSocketTests(TestCase):
         self.assertEqual(snapshot['type'], 'snapshot')
         self.assertEqual(snapshot['current_page'], 2)
         self.assertEqual(snapshot['subjects'][0]['player_key'], self.player_key)
+        self.assertIn(
+            f'/instructions/{self.session_id}/subject/{self.player_key}/',
+            snapshot['subjects'][0]['instructions_url'],
+        )
+        self.assertIn('complete_url=', snapshot['subjects'][0]['instructions_url'])
 
         await status.send_json_to({'action': 'reset_instructions'})
         staff_page = await staff.receive_json_from()

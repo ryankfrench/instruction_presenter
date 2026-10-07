@@ -41,6 +41,17 @@ def subject_pattern_path(session_id: str, manifest: InstructionManifest) -> str:
     return path
 
 
+def subject_instructions_path(session_id: str, player_key: str, complete_url: str) -> str:
+    """Subject page for one player, including a completion overlay when one applies."""
+    path = reverse(
+        'instruction_presenter:subject_home',
+        args=[session_id, player_key],
+    )
+    if complete_url:
+        return f'{path}?{urlencode([("complete_url", complete_url)])}'
+    return path
+
+
 def index_rows() -> list[dict]:
     """Sessions whose manifest is still cached. Stale registry entries are dropped."""
     rows = []
@@ -87,6 +98,11 @@ def build_status_payload(session_id: str) -> dict | None:
                 'connection_count': row['connection_count'],
                 'connected_label': format_timestamp(row['connected_at']),
                 'completion_url': completion,
+                'instructions_url': subject_instructions_path(
+                    session_id,
+                    row['player_key'],
+                    completion or manifest.complete_url,
+                ),
             }
         )
     current_file = manifest.files[page - 1]
