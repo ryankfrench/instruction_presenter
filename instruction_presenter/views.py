@@ -9,8 +9,10 @@ from django.views.decorators.http import require_http_methods
 
 from instruction_presenter.manifest import (
     build_manifest_from_query,
+    current_file_url,
     current_pdf_url,
     ensure_manifest,
+    files_are_supported,
     get_cached_manifest,
     set_cached_manifest,
     set_subject_completion_url,
@@ -64,6 +66,14 @@ def _parse_page_count(request) -> int | None:
 def _numbered_page_files(page_count: int) -> list[str]:
     """page001.pdf, page002.pdf, … (same convention as dutch-sealed-first demo)."""
     return [f'page{i:03d}.pdf' for i in range(1, page_count + 1)]
+
+
+def _parse_file_list(raw: str) -> list[str]:
+    """Non-empty lines from the staff filenames field."""
+    return [line.strip() for line in (raw or '').splitlines() if line.strip()]
+
+
+_UNSUPPORTED_FILE_MESSAGE = 'Each file must be a .pdf or .mp4.'
 
 
 def _demo_param_query_string(
@@ -207,6 +217,7 @@ def staff_index(request):
     form_data = {
         'base_url': '',
         'page_count': '',
+        'files': '',
         'complete_url': '',
         'staff_complete_url': '',
     }
@@ -217,14 +228,20 @@ def staff_index(request):
         form_data = {
             'base_url': (request.POST.get('base_url') or '').strip(),
             'page_count': (request.POST.get('page_count') or '').strip(),
+            'files': request.POST.get('files') or '',
             'complete_url': (request.POST.get('complete_url') or '').strip(),
             'staff_complete_url': (request.POST.get('staff_complete_url') or '').strip(),
         }
+        listed_files = _parse_file_list(form_data['files'])
         page_count = _parse_positive_int(form_data['page_count'])
-        if not form_data['base_url'] or page_count is None:
-            form_error = 'Provide a base URL and a positive page count.'
+        if not form_data['base_url'] or (not listed_files and page_count is None):
+            form_error = (
+                'Provide a base URL and a positive page count, or list file paths.'
+            )
+        elif listed_files and not files_are_supported(listed_files):
+            form_error = _UNSUPPORTED_FILE_MESSAGE
         else:
-            files = _numbered_page_files(page_count)
+            files = listed_files or _numbered_page_files(page_count)
             qd = QueryDict(mutable=True)
             qd['base_url'] = form_data['base_url']
             qd.setlist('f', files)
@@ -256,24 +273,48 @@ def staff_index(request):
     return render(request, 'staff_index.html', context)
 
 
-def staff_home(request, session_id):
-    manifest = ensure_manifest(request, session_id)
-    if not manifest or manifest.total_pages == 0:
-        return HttpResponseBadRequest(
-            'Missing or invalid instruction parameters. '
-            'Provide base_url, repeated f= for each PDF in order '
-            '(optional complete_url and staff_complete_url for end-of-session redirects), '
-            'or open a link that includes those parameters once so the session is cached.'
-        )
+def _unsupported_file_response(request):
+    """Reject a staff link whose f= list contains a type other than pdf or mp4."""
+    files = request.GET.getlist('f')
+    if files and not files_are_supported(files):
+        return HttpResponseBadRequest(_UNSUPPORTED_FILE_MESSAGE)
+    return None
+
+
+def _page_view(request, session_id, manifest, *, player_key=None):
     sid = str(session_id)
     page = min(max(get_current_page_sync(sid), 1), manifest.total_pages)
+    kind = manifest.media_kind_for_page(page)
+    if kind is None:
+        return HttpResponseBadRequest(_UNSUPPORTED_FILE_MESSAGE)
     context = {
         'session_id': sid,
         'current_page': page,
         'total_pages': manifest.total_pages,
+        'current_file': current_file_url(manifest, page),
         'current_pdf': current_pdf_url(manifest, page),
     }
-    return render(request, 'staff_home.html', context)
+    if player_key is None:
+        template = 'staff_video.html' if kind == 'video' else 'staff_home.html'
+    else:
+        context['player_key'] = str(player_key)
+        template = 'subject_video.html' if kind == 'video' else 'subject_home.html'
+    return render(request, template, context)
+
+
+def staff_home(request, session_id):
+    rejected = _unsupported_file_response(request)
+    if rejected is not None:
+        return rejected
+    manifest = ensure_manifest(request, session_id)
+    if not manifest or manifest.total_pages == 0:
+        return HttpResponseBadRequest(
+            'Missing or invalid instruction parameters. '
+            'Provide base_url, repeated f= for each .pdf or .mp4 in order '
+            '(optional complete_url and staff_complete_url for end-of-session redirects), '
+            'or open a link that includes those parameters once so the session is cached.'
+        )
+    return _page_view(request, session_id, manifest)
 
 
 def staff_status(request, session_id):
@@ -316,15 +357,7 @@ def subject_home(request, session_id, player_key):
             'Unknown or expired instruction session. '
             'Staff must open the manifest first so this session is cached.'
         )
-    page = min(max(get_current_page_sync(sid), 1), manifest.total_pages)
-    context = {
-        'session_id': sid,
-        'player_key': str(player_key),
-        'current_page': page,
-        'total_pages': manifest.total_pages,
-        'current_pdf': current_pdf_url(manifest, page),
-    }
-    return render(request, 'subject_home.html', context)
+    return _page_view(request, session_id, manifest, player_key=player_key)
 
 
 def subject_join(request, session_id):

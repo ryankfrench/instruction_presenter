@@ -1,0 +1,199 @@
+{% extends "instruction_base.html" %}
+{% load static %}
+
+{% block head %}
+<style>
+html, body {
+    height: 100%;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+}
+.container {
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+}
+.content {
+    flex: 0 1 auto;
+}
+.video-viewer-container {
+    flex: 1 1 auto;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+}
+.video-viewer-container > .col {
+    position: relative;
+    height: 100%;
+}
+#instruction-video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: #000;
+}
+.enable-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: rgba(0, 0, 0, 0.45);
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container">
+    <div class="row text-center content">
+        <h1>Page {{ current_page }}</h1>
+    </div>
+    <div class="row video-viewer-container">
+        <div class="col">
+            <video id="instruction-video" src="{{ current_file }}" preload="auto" playsinline></video>
+            <div id="enable-video" class="enable-overlay">
+                <button type="button" class="btn btn-primary btn-lg" id="enable-video-btn">Click to enable video</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block tail %}
+<script>
+    const sessionId = "{{ session_id }}";
+    const playerKey = "{{ player_key }}";
+    const ws_scheme = window.location.protocol === "https:" ? "wss" : "ws";
+
+    let isPageChange = false;
+    let socket = null;
+    const video = document.getElementById('instruction-video');
+    const enableOverlay = document.getElementById('enable-video');
+    let videoEnabled = false;
+    let pendingCommand = null;
+    let startTimer = null;
+
+    function autoplayWithSoundAllowed() {
+        try {
+            if (typeof navigator.getAutoplayPolicy !== 'function') {
+                return false;
+            }
+            return navigator.getAutoplayPolicy(video) === 'allowed';
+        } catch (err) {
+            return false;
+        }
+    }
+
+    if (autoplayWithSoundAllowed()) {
+        videoEnabled = true;
+        enableOverlay.hidden = true;
+    }
+
+    function showClosedByStaff() {
+        document.body.innerHTML = '<div class="container py-5 text-center"><h1>You can close this window</h1><p>Instructions for this screen were closed by staff.</p></div>';
+    }
+
+    function applyMediaCommand(msg) {
+        if (!videoEnabled) {
+            pendingCommand = msg;
+            return;
+        }
+        if (startTimer !== null) {
+            clearTimeout(startTimer);
+            startTimer = null;
+        }
+        if (msg.command === 'pause') {
+            video.pause();
+            if (typeof msg.position === 'number' && Number.isFinite(msg.position)) {
+                video.currentTime = msg.position;
+            }
+            return;
+        }
+        const serverTimeMs = msg.server_time * 1000;
+        const offset = Date.now() - serverTimeMs;
+        const playAtLocal = msg.play_at * 1000 + offset;
+        const start = () => {
+            startTimer = null;
+            const late = Math.max(0, (Date.now() - playAtLocal) / 1000);
+            const target = (msg.position || 0) + late;
+            const seekAndPlay = () => {
+                video.currentTime = target;
+                video.play().catch((err) => console.error('Playback failed', err));
+            };
+            if (video.readyState >= 1) {
+                seekAndPlay();
+            } else {
+                video.addEventListener('loadedmetadata', seekAndPlay, { once: true });
+            }
+        };
+        const wait = playAtLocal - Date.now();
+        if (wait > 20) {
+            startTimer = setTimeout(start, wait);
+        } else {
+            start();
+        }
+    }
+
+    document.getElementById('enable-video-btn').addEventListener('click', async () => {
+        enableOverlay.hidden = true;
+        try {
+            await video.play();
+            video.pause();
+        } catch (err) {
+            console.error('Could not enable video', err);
+        }
+        videoEnabled = true;
+        const command = pendingCommand;
+        pendingCommand = null;
+        if (command) {
+            applyMediaCommand(command);
+        } else {
+            video.currentTime = 0;
+        }
+    });
+
+    function connectWebSocket() {
+        socket = new WebSocket(`${ws_scheme}://${window.location.host}/ws/instructions/${sessionId}/${playerKey}/`);
+
+        socket.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            if (data.type === 'update_page') {
+                isPageChange = true;
+                window.location.reload();
+            } else if (data.type === 'media_command') {
+                applyMediaCommand(data);
+            } else if (data.type === 'end_instructions') {
+                isPageChange = true;
+                if (data.redirect_link) {
+                    window.location.href = data.redirect_link;
+                } else {
+                    socket.close();
+                    window.close();
+                    showClosedByStaff();
+                }
+            } else if (data.type === 'close_tab') {
+                isPageChange = true;
+                socket.close();
+                window.close();
+                showClosedByStaff();
+            }
+        };
+
+        socket.onerror = function(error) {
+            console.error('WebSocket Error:', error);
+        };
+
+        socket.onclose = function() {
+            if (!isPageChange) {
+                setTimeout(connectWebSocket, 1000);
+            }
+        };
+
+        return socket;
+    }
+
+    connectWebSocket();
+</script>
+{% endblock %}
