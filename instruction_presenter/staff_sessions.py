@@ -7,7 +7,12 @@ from urllib.parse import urlencode
 
 from django.urls import reverse
 
-from instruction_presenter.manifest import InstructionManifest, get_cached_manifest, get_subject_completion_url
+from instruction_presenter.manifest import (
+    InstructionManifest,
+    get_cached_manifest,
+    get_subject_completion_url,
+    media_kind_for_filename,
+)
 from instruction_presenter.session_state import (
     get_current_page_sync,
     list_subject_groups,
@@ -122,6 +127,7 @@ def build_status_payload(session_id: str) -> dict | None:
         'current_file': current_file,
         'base_url': manifest.base_url,
         'files': list(manifest.files),
+        'has_video': any(media_kind_for_filename(name) == 'video' for name in manifest.files),
         'complete_url': manifest.complete_url,
         'staff_complete_url': manifest.staff_complete_url or '',
         'subject_join_path': subject_join_path(session_id, manifest),
