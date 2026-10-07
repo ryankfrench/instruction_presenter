@@ -1,0 +1,193 @@
+{% extends "instruction_base.html" %}
+
+{% block content %}
+<div id="status-ended" class="alert alert-warning" hidden role="status">
+    This instruction session has ended.
+</div>
+
+<div id="status-live">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-4">
+        <h1 class="h3 mb-0">Session status</h1>
+        <a href="{% url 'instruction_presenter:staff_index' %}">All sessions</a>
+    </div>
+
+    <dl class="row">
+        <dt class="col-sm-3">Session</dt>
+        <dd class="col-sm-9"><code id="session-id">{{ status.session_id }}</code></dd>
+        <dt class="col-sm-3">Page</dt>
+        <dd class="col-sm-9"><span id="current-page">{{ status.current_page }}</span> / <span id="total-pages">{{ status.total_pages }}</span></dd>
+        <dt class="col-sm-3">Current file</dt>
+        <dd class="col-sm-9" id="current-file">{{ status.current_file }}</dd>
+        <dt class="col-sm-3">Base URL</dt>
+        <dd class="col-sm-9 text-break" id="base-url">{{ status.base_url }}</dd>
+        <dt class="col-sm-3">Subject completion URL</dt>
+        <dd class="col-sm-9 text-break" id="complete-url">{{ status.complete_url|default:"—" }}</dd>
+        <dt class="col-sm-3">Staff completion URL</dt>
+        <dd class="col-sm-9 text-break" id="staff-complete-url">{{ status.staff_complete_url|default:"—" }}</dd>
+        <dt class="col-sm-3">PDF files</dt>
+        <dd class="col-sm-9">
+            <ul id="file-list" class="mb-0" style="max-height: 12rem; overflow: auto;">
+                {% for filename in status.files %}
+                <li>{{ filename }}</li>
+                {% endfor %}
+            </ul>
+        </dd>
+    </dl>
+
+    <div class="d-flex flex-wrap gap-2 mb-4">
+        <button type="button" class="btn btn-warning" id="reset-btn">Reset instructions</button>
+        <button type="button" class="btn btn-outline-danger" id="close-all-btn"{% if not status.subjects %} disabled{% endif %}>Close all subject tabs</button>
+    </div>
+
+    <h2 class="h5">Connected subjects</h2>
+    <div class="table-responsive">
+        <table class="table table-sm align-middle">
+            <thead>
+                <tr>
+                    <th>Player key</th>
+                    <th>Connected</th>
+                    <th>Connections</th>
+                    <th>Completion URL</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody id="subject-rows">
+                {% for subject in status.subjects %}
+                <tr>
+                    <td><code>{{ subject.player_key }}</code></td>
+                    <td>{{ subject.connected_label }}</td>
+                    <td>{{ subject.connection_count }}</td>
+                    <td class="text-break">{{ subject.completion_url|default:"—" }}</td>
+                    <td>
+                        <button type="button" class="btn btn-sm btn-outline-danger" data-player-key="{{ subject.player_key }}">Close tab</button>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5" class="text-muted">No subjects connected.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
+
+{% block tail %}
+<script>
+    const sessionId = "{{ status.session_id }}";
+    const wsScheme = window.location.protocol === "https:" ? "wss" : "ws";
+    let socket = null;
+    let ended = false;
+
+    function textOrDash(value) {
+        return value ? value : "—";
+    }
+
+    function renderSnapshot(data) {
+        document.getElementById("current-page").textContent = data.current_page;
+        document.getElementById("total-pages").textContent = data.total_pages;
+        document.getElementById("current-file").textContent = data.current_file;
+        document.getElementById("base-url").textContent = data.base_url;
+        document.getElementById("complete-url").textContent = textOrDash(data.complete_url);
+        document.getElementById("staff-complete-url").textContent = textOrDash(data.staff_complete_url);
+
+        const fileList = document.getElementById("file-list");
+        fileList.replaceChildren();
+        (data.files || []).forEach((filename) => {
+            const item = document.createElement("li");
+            item.textContent = filename;
+            fileList.appendChild(item);
+        });
+
+        const tbody = document.getElementById("subject-rows");
+        tbody.replaceChildren();
+        const subjects = data.subjects || [];
+        if (subjects.length === 0) {
+            const row = document.createElement("tr");
+            const cell = document.createElement("td");
+            cell.colSpan = 5;
+            cell.className = "text-muted";
+            cell.textContent = "No subjects connected.";
+            row.appendChild(cell);
+            tbody.appendChild(row);
+        } else {
+            subjects.forEach((subject) => {
+                const row = document.createElement("tr");
+                const keyCell = document.createElement("td");
+                const code = document.createElement("code");
+                code.textContent = subject.player_key;
+                keyCell.appendChild(code);
+                const whenCell = document.createElement("td");
+                whenCell.textContent = subject.connected_label;
+                const countCell = document.createElement("td");
+                countCell.textContent = subject.connection_count;
+                const urlCell = document.createElement("td");
+                urlCell.className = "text-break";
+                urlCell.textContent = textOrDash(subject.completion_url);
+                const actionCell = document.createElement("td");
+                const button = document.createElement("button");
+                button.type = "button";
+                button.className = "btn btn-sm btn-outline-danger";
+                button.textContent = "Close tab";
+                button.dataset.playerKey = subject.player_key;
+                actionCell.appendChild(button);
+                row.append(keyCell, whenCell, countCell, urlCell, actionCell);
+                tbody.appendChild(row);
+            });
+        }
+        document.getElementById("close-all-btn").disabled = subjects.length === 0;
+    }
+
+    function showEnded() {
+        ended = true;
+        document.getElementById("status-live").hidden = true;
+        document.getElementById("status-ended").hidden = false;
+        if (socket) {
+            socket.close();
+        }
+    }
+
+    function connectStatusSocket() {
+        socket = new WebSocket(`${wsScheme}://${window.location.host}/ws/instructions/${sessionId}/status/`);
+        socket.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            if (data.type === "snapshot") {
+                renderSnapshot(data);
+            } else if (data.type === "session_ended") {
+                showEnded();
+            }
+        };
+        socket.onclose = function() {
+            if (!ended) {
+                setTimeout(connectStatusSocket, 1000);
+            }
+        };
+    }
+
+    connectStatusSocket();
+
+    document.getElementById("reset-btn").addEventListener("click", function() {
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ action: "reset_instructions" }));
+        }
+    });
+
+    document.getElementById("close-all-btn").addEventListener("click", function() {
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ action: "close_subject" }));
+        }
+    });
+
+    document.getElementById("subject-rows").addEventListener("click", function(event) {
+        const button = event.target.closest("[data-player-key]");
+        if (!button || !socket || socket.readyState !== WebSocket.OPEN) {
+            return;
+        }
+        socket.send(JSON.stringify({
+            action: "close_subject",
+            player_key: button.dataset.playerKey,
+        }));
+    });
+</script>
+{% endblock %}

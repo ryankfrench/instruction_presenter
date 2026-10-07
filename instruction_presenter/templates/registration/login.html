@@ -1,0 +1,29 @@
+{% extends "instruction_base.html" %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6 col-lg-4">
+        <h1 class="h3 mb-4">Staff sign in</h1>
+        {% if form.errors %}
+        <div class="alert alert-danger" role="alert">
+            Username or password was not recognized.
+        </div>
+        {% endif %}
+        <form method="post" action="{% url 'login' %}">
+            {% csrf_token %}
+            <div class="mb-3">
+                <label class="form-label" for="{{ form.username.id_for_label }}">Username</label>
+                <input type="text" name="username" autofocus required class="form-control"
+                       id="{{ form.username.id_for_label }}" value="{{ form.username.value|default:'' }}">
+            </div>
+            <div class="mb-3">
+                <label class="form-label" for="{{ form.password.id_for_label }}">Password</label>
+                <input type="password" name="password" required class="form-control"
+                       id="{{ form.password.id_for_label }}">
+            </div>
+            <input type="hidden" name="next" value="{{ next }}">
+            <button type="submit" class="btn btn-primary">Sign in</button>
+        </form>
+    </div>
+</div>
+{% endblock %}

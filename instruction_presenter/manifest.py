@@ -154,8 +154,8 @@ def build_manifest_from_query(
         not pass an explicit complete_url.
 
         When False (staff manifest URL), omitted complete_url is stored as '' and not
-        validated; subjects must still open with complete_url on their link (enforced
-        in subject_home). Staff omits staff_complete_url to mean window.close on end.
+        validated. Subjects may open without complete_url; end-of-instructions then
+        closes the window. Staff omits staff_complete_url to mean window.close on end.
     """
     if not has_manifest_params(query):
         return None
@@ -219,13 +219,16 @@ def get_cached_manifest(session_id: str) -> InstructionManifest | None:
 def set_cached_manifest(session_id: str, manifest: InstructionManifest) -> None:
     ttl = getattr(settings, 'INSTRUCTION_MANIFEST_TTL', 86400)
     cache.set(manifest_cache_key(session_id), manifest_to_dict(manifest), ttl)
+    from instruction_presenter.session_state import register_session
+
+    register_session(session_id)
 
 
 def ensure_manifest(request: HttpRequest, session_id: str) -> InstructionManifest | None:
     """
     Return manifest from query params (and refresh cache) or from cache.
-    Staff may omit complete_url / staff_complete_url; subjects still require
-    complete_url on the subject link (see subject_home).
+    Staff may omit complete_url / staff_complete_url. Subjects may also omit
+    complete_url; a query value overrides the session redirect for that subject.
     """
     m = build_manifest_from_query(
         request.GET,

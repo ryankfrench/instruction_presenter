@@ -5,7 +5,7 @@ from channels.generic.websocket import AsyncWebsocketConsumer
 from django.core.cache import cache
 
 from instruction_presenter.manifest import get_cached_manifest, manifest_cache_key
-from instruction_presenter.session_state import adjust_page
+from instruction_presenter.session_state import adjust_page, unregister_session
 
 
 class StaffConsumer(AsyncWebsocketConsumer):
@@ -67,6 +67,7 @@ class StaffConsumer(AsyncWebsocketConsumer):
 
         # Drop cached manifest so session cannot be resumed accidentally
         await sync_to_async(cache.delete)(manifest_cache_key(self.session_id))
+        unregister_session(self.session_id)
 
     async def send_update_page(self, page_number):
         await self.channel_layer.group_send(
@@ -98,3 +99,11 @@ class StaffConsumer(AsyncWebsocketConsumer):
                 }
             )
         )
+
+    async def presence_changed(self, event):
+        """Subject connect and disconnect notices are for the status page."""
+        return
+
+    async def close_subject(self, event):
+        """Close-tab commands are delivered to subject screens."""
+        return

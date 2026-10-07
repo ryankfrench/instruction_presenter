@@ -7,6 +7,7 @@ from instruction_presenter.manifest import (
     clear_subject_completion_url,
     get_subject_completion_url,
 )
+from instruction_presenter.session_state import register_subject, unregister_subject
 
 
 class SubjectConsumer(AsyncWebsocketConsumer):
@@ -17,12 +18,31 @@ class SubjectConsumer(AsyncWebsocketConsumer):
 
         await self.channel_layer.group_add(self.group_name, self.channel_name)
         await self.accept()
+        register_subject(self.session_id, self.player_key, self.channel_name)
+        await self.channel_layer.group_send(
+            self.group_name,
+            {'type': 'presence_changed'},
+        )
 
     async def disconnect(self, close_code):
+        unregister_subject(self.session_id, self.channel_name)
         await self.channel_layer.group_discard(self.group_name, self.channel_name)
+        await self.channel_layer.group_send(
+            self.group_name,
+            {'type': 'presence_changed'},
+        )
 
     async def receive(self, text_data):
         pass
+
+    async def presence_changed(self, event):
+        return
+
+    async def close_subject(self, event):
+        target = event.get('player_key') or ''
+        if target and target != self.player_key:
+            return
+        await self.send(text_data=json.dumps({'type': 'close_tab'}))
 
     async def update_page(self, event):
         page_number = event['message']

@@ -1,0 +1,123 @@
+{% extends "instruction_base.html" %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-4">
+    <h1 class="h3 mb-0">Instruction sessions</h1>
+    <div class="d-flex align-items-center gap-3">
+        <span class="text-muted">{{ user.get_username }}</span>
+        <form method="post" action="{% url 'logout' %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-outline-secondary btn-sm">Sign out</button>
+        </form>
+    </div>
+</div>
+
+{% if created_session %}
+<div class="alert alert-success" role="status">
+    <p class="mb-2"><strong>Session created.</strong> Share the presenter link to open the controller directly. Replace <code>{player_key}</code> in the subject link.</p>
+    <div class="mb-2">
+        <div class="form-label">Presenter</div>
+        <div class="input-group">
+            <input type="text" class="form-control" readonly value="{{ created_session.presenter_url }}">
+            <button type="button" class="btn btn-outline-secondary copy-btn" data-copy="{{ created_session.presenter_url }}">Copy</button>
+        </div>
+    </div>
+    <div>
+        <div class="form-label">Subject</div>
+        <div class="input-group">
+            <input type="text" class="form-control" readonly value="{{ created_session.subject_pattern_url }}">
+            <button type="button" class="btn btn-outline-secondary copy-btn" data-copy="{{ created_session.subject_pattern_url }}">Copy</button>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<h2 class="h5">Current sessions</h2>
+<p class="text-muted">Connection counts update when you reload this page. Sessions stay in memory until instructions end or this process restarts.</p>
+<p><a class="btn btn-outline-primary btn-sm" href="{% url 'instruction_presenter:staff_index' %}">Reload</a></p>
+
+<div class="table-responsive mb-5">
+    <table class="table table-sm align-middle">
+        <thead>
+            <tr>
+                <th>Session</th>
+                <th>Page</th>
+                <th>Subjects</th>
+                <th>Started</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for session in sessions %}
+            <tr{% if created_session and session.session_id == created_session.session_id %} class="table-success"{% endif %}>
+                <td>
+                    <code>{{ session.session_id }}</code>
+                    <div class="small text-muted text-break">{{ session.base_url }}</div>
+                </td>
+                <td>{{ session.current_page }} / {{ session.total_pages }}</td>
+                <td>{{ session.subject_count }}</td>
+                <td>{{ session.created_label }}</td>
+                <td class="text-nowrap">
+                    <a class="btn btn-primary btn-sm" href="{{ session.presenter_url }}" target="_blank" rel="noopener">Presenter</a>
+                    <a class="btn btn-outline-primary btn-sm" href="{{ session.status_url }}">Status</a>
+                    <button type="button" class="btn btn-outline-secondary btn-sm copy-btn" data-copy="{{ session.presenter_url }}">Copy presenter</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm copy-btn" data-copy="{{ session.subject_pattern_url }}">Copy subject</button>
+                </td>
+            </tr>
+            {% empty %}
+            <tr>
+                <td colspan="5" class="text-muted">No sessions yet. Create one below, or open a presenter link with its usual parameters.</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<h2 class="h5">New session</h2>
+<p class="text-muted">PDFs are named page001.pdf, page002.pdf, and so on under the base URL.</p>
+{% if form_error %}
+<div class="alert alert-danger" role="alert">{{ form_error }}</div>
+{% endif %}
+<form method="post" class="row g-3">
+    {% csrf_token %}
+    <div class="col-12">
+        <label class="form-label" for="base_url">PDF base URL</label>
+        <input class="form-control" id="base_url" name="base_url" required value="{{ form_data.base_url }}">
+    </div>
+    <div class="col-md-4">
+        <label class="form-label" for="page_count">Page count</label>
+        <input class="form-control" type="number" min="1" step="1" id="page_count" name="page_count" required value="{{ form_data.page_count }}">
+    </div>
+    <div class="col-md-4">
+        <label class="form-label" for="complete_url">Subject completion URL</label>
+        <input class="form-control" id="complete_url" name="complete_url" value="{{ form_data.complete_url }}" placeholder="Optional">
+    </div>
+    <div class="col-md-4">
+        <label class="form-label" for="staff_complete_url">Staff completion URL</label>
+        <input class="form-control" id="staff_complete_url" name="staff_complete_url" value="{{ form_data.staff_complete_url }}" placeholder="Optional">
+    </div>
+    <div class="col-12">
+        <button type="submit" class="btn btn-primary">Create session</button>
+    </div>
+</form>
+{% endblock %}
+
+{% block tail %}
+<script>
+document.querySelectorAll('.copy-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+        const value = button.getAttribute('data-copy') || '';
+        try {
+            await navigator.clipboard.writeText(value);
+            const previous = button.textContent;
+            button.textContent = 'Copied';
+            setTimeout(() => {
+                button.textContent = previous;
+            }, 1200);
+        } catch (err) {
+            console.error('Copy failed', err);
+        }
+    });
+});
+</script>
+{% endblock %}
