@@ -6,6 +6,11 @@ app_name = 'instruction_presenter'
 
 urlpatterns = [
     path(
+        'instructions/staff/',
+        views.staff_index,
+        name='staff_index',
+    ),
+    path(
         'demo/staff/',
         views.demo_staff,
         name='demo_staff',
@@ -26,9 +31,19 @@ urlpatterns = [
         name='demo_dutch_sealed_subject',
     ),
     path(
+        'instructions/<uuid:session_id>/staff/status/',
+        views.staff_status,
+        name='staff_status',
+    ),
+    path(
         'instructions/<uuid:session_id>/staff/',
         views.staff_home,
         name='staff_home',
+    ),
+    path(
+        'instructions/<uuid:session_id>/subject/',
+        views.subject_join,
+        name='subject_join',
     ),
     path(
         'instructions/<uuid:session_id>/subject/<uuid:player_key>/',

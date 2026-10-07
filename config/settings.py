@@ -191,6 +191,10 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+LOGIN_URL = 'login'
+LOGIN_REDIRECT_URL = 'instruction_presenter:staff_index'
+LOGOUT_REDIRECT_URL = 'login'
+
 # Optional overrides (not in repo): must run last so ALLOWED_HOSTS / DEBUG / etc. win.
 try:
     from .local_settings import *  # noqa: F403, E402

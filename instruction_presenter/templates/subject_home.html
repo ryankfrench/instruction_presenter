@@ -60,9 +60,14 @@ html, body {
     const ws_scheme = window.location.protocol === "https:" ? "wss" : "ws";
 
     let isPageChange = false;
+    let socket = null;
+
+    function showClosedByStaff() {
+        document.body.innerHTML = '<div class="container py-5 text-center"><h1>You can close this window</h1><p>Instructions for this screen were closed by staff.</p></div>';
+    }
 
     function connectWebSocket() {
-        const socket = new WebSocket(`${ws_scheme}://${window.location.host}/ws/instructions/${sessionId}/${playerKey}/`);
+        socket = new WebSocket(`${ws_scheme}://${window.location.host}/ws/instructions/${sessionId}/${playerKey}/`);
 
         socket.onmessage = function(event) {
             const data = JSON.parse(event.data);
@@ -71,7 +76,18 @@ html, body {
                 window.location.reload();
             } else if (data.type === 'end_instructions') {
                 isPageChange = true;
-                window.location.href = data.redirect_link;
+                if (data.redirect_link) {
+                    window.location.href = data.redirect_link;
+                } else {
+                    socket.close();
+                    window.close();
+                    showClosedByStaff();
+                }
+            } else if (data.type === 'close_tab') {
+                isPageChange = true;
+                socket.close();
+                window.close();
+                showClosedByStaff();
             }
         };
 
