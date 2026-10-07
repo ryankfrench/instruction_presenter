@@ -14,7 +14,7 @@
 
 {% if created_session %}
 <div class="alert alert-success" role="status">
-    <p class="mb-2"><strong>Session created.</strong> Share the presenter link to open the controller directly. Replace <code>{player_key}</code> in the subject link.</p>
+    <p class="mb-2"><strong>Session created.</strong> Share the presenter link to open the controller directly. Replace <code>{player_key}</code> in the subject link, or share the subject join link so each visit gets its own player key.</p>
     <div class="mb-2">
         <div class="form-label">Presenter</div>
         <div class="input-group">
@@ -22,11 +22,18 @@
             <button type="button" class="btn btn-outline-secondary copy-btn" data-copy="{{ created_session.presenter_url }}">Copy</button>
         </div>
     </div>
-    <div>
+    <div class="mb-2">
         <div class="form-label">Subject</div>
         <div class="input-group">
             <input type="text" class="form-control" readonly value="{{ created_session.subject_pattern_url }}">
             <button type="button" class="btn btn-outline-secondary copy-btn" data-copy="{{ created_session.subject_pattern_url }}">Copy</button>
+        </div>
+    </div>
+    <div>
+        <div class="form-label">Subject join</div>
+        <div class="input-group">
+            <input type="text" class="form-control" readonly value="{{ created_session.subject_join_url }}">
+            <button type="button" class="btn btn-outline-secondary copy-btn" data-copy="{{ created_session.subject_join_url }}">Copy</button>
         </div>
     </div>
 </div>
@@ -62,6 +69,7 @@
                     <a class="btn btn-outline-primary btn-sm" href="{{ session.status_url }}">Status</a>
                     <button type="button" class="btn btn-outline-secondary btn-sm copy-btn" data-copy="{{ session.presenter_url }}">Copy presenter</button>
                     <button type="button" class="btn btn-outline-secondary btn-sm copy-btn" data-copy="{{ session.subject_pattern_url }}">Copy subject</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm copy-btn" data-copy="{{ session.subject_join_url }}">Copy join link</button>
                 </td>
             </tr>
             {% empty %}

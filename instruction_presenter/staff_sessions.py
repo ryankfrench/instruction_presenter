@@ -41,6 +41,14 @@ def subject_pattern_path(session_id: str, manifest: InstructionManifest) -> str:
     return path
 
 
+def subject_join_path(session_id: str, manifest: InstructionManifest) -> str:
+    """Shared subject link. Each visit is assigned a new player key."""
+    path = reverse('instruction_presenter:subject_join', args=[session_id])
+    if manifest.complete_url:
+        return f'{path}?{urlencode([("complete_url", manifest.complete_url)])}'
+    return path
+
+
 def subject_instructions_path(session_id: str, player_key: str, complete_url: str) -> str:
     """Subject page for one player, including a completion overlay when one applies."""
     path = reverse(
@@ -77,6 +85,7 @@ def index_rows() -> list[dict]:
                     'instruction_presenter:staff_status', args=[session_id]
                 ),
                 'subject_pattern_path': subject_pattern_path(session_id, manifest),
+                'subject_join_path': subject_join_path(session_id, manifest),
                 'base_url': manifest.base_url,
             }
         )
@@ -115,5 +124,6 @@ def build_status_payload(session_id: str) -> dict | None:
         'files': list(manifest.files),
         'complete_url': manifest.complete_url,
         'staff_complete_url': manifest.staff_complete_url or '',
+        'subject_join_path': subject_join_path(session_id, manifest),
         'subjects': subjects,
     }

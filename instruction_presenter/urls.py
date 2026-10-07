@@ -41,6 +41,11 @@ urlpatterns = [
         name='staff_home',
     ),
     path(
+        'instructions/<uuid:session_id>/subject/',
+        views.subject_join,
+        name='subject_join',
+    ),
+    path(
         'instructions/<uuid:session_id>/subject/<uuid:player_key>/',
         views.subject_home,
         name='subject_home',

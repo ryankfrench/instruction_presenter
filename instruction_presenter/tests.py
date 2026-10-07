@@ -1,6 +1,6 @@
 import asyncio
 from urllib.parse import parse_qs, urlsplit
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from asgiref.sync import async_to_sync
 from channels.routing import URLRouter
@@ -27,6 +27,12 @@ from instruction_presenter.session_state import (
 from instruction_presenter.staff_sessions import index_rows
 
 _ws_application = URLRouter(websocket_urlpatterns)
+
+
+def _player_key_from_subject_path(url: str) -> str:
+    player_key = urlsplit(url).path.rstrip('/').split('/')[-1]
+    UUID(player_key)
+    return player_key
 
 
 class StaffIndexTests(TestCase):
@@ -63,6 +69,8 @@ class StaffIndexTests(TestCase):
         self.assertContains(follow, 'page002.pdf')
         self.assertContains(follow, '{player_key}')
         self.assertContains(follow, 'complete_url=https%3A%2F%2Flocalhost%2Fdone')
+        self.assertContains(follow, 'Copy join link')
+        self.assertContains(follow, f'/instructions/{created}/subject/?')
 
         self.client.logout()
         presenter = self.client.get(
@@ -76,6 +84,8 @@ class StaffIndexTests(TestCase):
         self.assertEqual(status.status_code, 200)
         self.assertContains(status, 'Session status')
         self.assertContains(status, 'page001.pdf')
+        self.assertContains(status, 'Subject join URL')
+        self.assertContains(status, f'/instructions/{created}/subject/?')
 
     def test_rejects_disallowed_completion_url(self):
         self.client.login(username='staffer', password='secret-pass')
@@ -111,6 +121,71 @@ class StaffIndexTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Page 1')
+
+    def test_subject_join_assigns_distinct_player_keys(self):
+        session_id = uuid4()
+        set_cached_manifest(
+            str(session_id),
+            InstructionManifest(
+                base_url='https://localhost/static/deck/',
+                files=('page001.pdf',),
+                complete_url='',
+                staff_complete_url=None,
+            ),
+        )
+        join_url = reverse('instruction_presenter:subject_join', args=[session_id])
+        first = self.client.get(join_url)
+        second = self.client.get(join_url)
+        self.assertEqual(first.status_code, 302)
+        self.assertEqual(second.status_code, 302)
+        first_key = _player_key_from_subject_path(first.url)
+        second_key = _player_key_from_subject_path(second.url)
+        self.assertNotEqual(first_key, second_key)
+        followed = self.client.get(first.url)
+        self.assertEqual(followed.status_code, 200)
+        self.assertContains(followed, 'Page 1')
+
+    def test_subject_join_preserves_complete_url(self):
+        session_id = uuid4()
+        set_cached_manifest(
+            str(session_id),
+            InstructionManifest(
+                base_url='https://localhost/static/deck/',
+                files=('page001.pdf',),
+                complete_url='https://localhost/session-done',
+                staff_complete_url=None,
+            ),
+        )
+        response = self.client.get(
+            reverse('instruction_presenter:subject_join', args=[session_id]),
+            {'complete_url': 'https://localhost/done'},
+        )
+        self.assertEqual(response.status_code, 302)
+        query = parse_qs(urlsplit(response.url).query)
+        self.assertEqual(query['complete_url'], ['https://localhost/done'])
+        followed = self.client.get(response.url)
+        self.assertEqual(followed.status_code, 200)
+
+    def test_subject_join_rejects_other_parameters_and_unknown_sessions(self):
+        session_id = uuid4()
+        set_cached_manifest(
+            str(session_id),
+            InstructionManifest(
+                base_url='https://localhost/static/deck/',
+                files=('page001.pdf',),
+                complete_url='',
+                staff_complete_url=None,
+            ),
+        )
+        rejected = self.client.get(
+            reverse('instruction_presenter:subject_join', args=[session_id]),
+            {'base_url': 'https://localhost/static/deck/'},
+        )
+        self.assertEqual(rejected.status_code, 400)
+        missing = self.client.get(
+            reverse('instruction_presenter:subject_join', args=[uuid4()])
+        )
+        self.assertEqual(missing.status_code, 400)
 
     def test_status_page_links_connected_subject_instructions(self):
         session_id = uuid4()

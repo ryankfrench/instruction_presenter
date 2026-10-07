@@ -187,6 +187,7 @@ def _index_context(request, *, form_data, form_error, created_id):
             'presenter_url': _absolute(request, row['presenter_path']),
             'status_url': _absolute(request, row['status_path']),
             'subject_pattern_url': _absolute(request, row['subject_pattern_path']),
+            'subject_join_url': _absolute(request, row['subject_join_path']),
         }
         sessions.append(session)
         if created_id and session['session_id'] == created_id:
@@ -324,3 +325,34 @@ def subject_home(request, session_id, player_key):
         'current_pdf': current_pdf_url(manifest, page),
     }
     return render(request, 'subject_home.html', context)
+
+
+def subject_join(request, session_id):
+    """Assign a new player key and open that subject's instructions."""
+    sid = str(session_id)
+    if set(request.GET.keys()) - {'complete_url'}:
+        return HttpResponseBadRequest(
+            'Subject links only accept complete_url. '
+            'Open staff first so the instruction session is cached.'
+        )
+
+    overlay = (request.GET.get('complete_url') or '').strip()
+    if overlay and not subject_completion_overlay_allowed(overlay):
+        return HttpResponseBadRequest(
+            'Invalid complete_url (must use an allowed host for redirects).'
+        )
+
+    manifest = get_cached_manifest(sid)
+    if not manifest or manifest.total_pages == 0:
+        return HttpResponseBadRequest(
+            'Unknown or expired instruction session. '
+            'Staff must open the manifest first so this session is cached.'
+        )
+
+    path = reverse(
+        'instruction_presenter:subject_home',
+        args=[sid, uuid4()],
+    )
+    if overlay:
+        path = f'{path}?{urlencode([("complete_url", overlay)])}'
+    return HttpResponseRedirect(path)

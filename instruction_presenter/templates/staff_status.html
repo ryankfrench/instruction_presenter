@@ -20,6 +20,8 @@
         <dd class="col-sm-9" id="current-file">{{ status.current_file }}</dd>
         <dt class="col-sm-3">Base URL</dt>
         <dd class="col-sm-9 text-break" id="base-url">{{ status.base_url }}</dd>
+        <dt class="col-sm-3">Subject join URL</dt>
+        <dd class="col-sm-9 text-break">{{ request.scheme }}://{{ request.get_host }}{{ status.subject_join_path }}</dd>
         <dt class="col-sm-3">Subject completion URL</dt>
         <dd class="col-sm-9 text-break" id="complete-url">{{ status.complete_url|default:"—" }}</dd>
         <dt class="col-sm-3">Staff completion URL</dt>
