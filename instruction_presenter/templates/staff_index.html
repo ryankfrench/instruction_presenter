@@ -1,118 +1,185 @@
 {% extends "instruction_base.html" %}
 
+{% block body_attrs %}style="font-size:16px"{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/7.0.1/css/all.min.css" integrity="sha512-2SwdPD6INVrV/lHTZbO2nodKhrnDdJK9/kg2XD1r9uGqPo1cUbujc+IYdlYdEErWNu69gVcYgdxlmVmzTWnetw==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+<style>
+    .table_header {
+        font-weight: bold;
+        font-size: 16px;
+    }
+    .sessions-table {
+        overflow: visible;
+    }
+</style>
+{% endblock %}
+
+{% block banner %}
+<nav class="navbar navbar-expand-lg navbar-light bg-light p-1">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="{% url 'instruction_presenter:staff_index' %}">Instructions</a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#staff-nav" aria-controls="staff-nav" aria-expanded="false" aria-label="Toggle navigation">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="staff-nav">
+            <ul class="navbar-nav me-auto">
+                <li class="nav-item">
+                    <a class="nav-link active" href="{% url 'instruction_presenter:staff_index' %}" title="Session list">
+                        Sessions <i class="fas fa-flask"></i>
+                    </a>
+                </li>
+            </ul>
+            <div class="dropdown">
+                <a class="nav-link dropdown-toggle" href="#" id="staff-user-menu" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                    {{ user.get_username }}
+                </a>
+                <ul class="dropdown-menu dropdown-menu-lg-end" aria-labelledby="staff-user-menu">
+                    <li>
+                        <form method="post" action="{% url 'logout' %}">
+                            {% csrf_token %}
+                            <button type="submit" class="dropdown-item">
+                                <i class="fas fa-sign-out-alt fa-fw"></i> Sign out
+                            </button>
+                        </form>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</nav>
+{% endblock %}
+
 {% block content %}
-<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-4">
-    <h1 class="h3 mb-0">Instruction sessions</h1>
-    <div class="d-flex align-items-center gap-3">
-        <span class="text-muted">{{ user.get_username }}</span>
-        <form method="post" action="{% url 'logout' %}">
-            {% csrf_token %}
-            <button type="submit" class="btn btn-outline-secondary btn-sm">Sign out</button>
-        </form>
-    </div>
-</div>
+<div class="row justify-content-lg-center">
+    <div class="col col-lg-10">
+        <div class="card">
+            <div class="card-header">
+                <a class="btn btn-outline-secondary btn-sm" href="{% url 'instruction_presenter:staff_index' %}">Reload</a>
+                <span class="float-end">
+                    <button class="btn btn-outline-success" type="button" data-bs-toggle="collapse" data-bs-target="#new-session-form" aria-expanded="{% if form_error %}true{% else %}false{% endif %}" aria-controls="new-session-form">
+                        New session <i class="fas fa-plus"></i>
+                    </button>
+                </span>
+            </div>
+            <div class="card-body">
+                {% if created_session %}
+                <div class="alert alert-success" role="status">
+                    <p class="mb-2"><strong>Session created.</strong> Share the presenter link to open the controller directly. Replace <code>{player_key}</code> in the subject link, or share the subject join link so each visit gets its own player key.</p>
+                    <div class="mb-2">
+                        <div class="form-label">Presenter</div>
+                        <div class="input-group">
+                            <input type="text" class="form-control" readonly value="{{ created_session.presenter_url }}">
+                            <button type="button" class="btn btn-outline-secondary copy-btn" data-copy="{{ created_session.presenter_url }}">Copy</button>
+                        </div>
+                    </div>
+                    <div class="mb-2">
+                        <div class="form-label">Subject</div>
+                        <div class="input-group">
+                            <input type="text" class="form-control" readonly value="{{ created_session.subject_pattern_url }}">
+                            <button type="button" class="btn btn-outline-secondary copy-btn" data-copy="{{ created_session.subject_pattern_url }}">Copy</button>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="form-label">Subject join</div>
+                        <div class="input-group">
+                            <input type="text" class="form-control" readonly value="{{ created_session.subject_join_url }}">
+                            <button type="button" class="btn btn-outline-secondary copy-btn" data-copy="{{ created_session.subject_join_url }}">Copy</button>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
 
-{% if created_session %}
-<div class="alert alert-success" role="status">
-    <p class="mb-2"><strong>Session created.</strong> Share the presenter link to open the controller directly. Replace <code>{player_key}</code> in the subject link, or share the subject join link so each visit gets its own player key.</p>
-    <div class="mb-2">
-        <div class="form-label">Presenter</div>
-        <div class="input-group">
-            <input type="text" class="form-control" readonly value="{{ created_session.presenter_url }}">
-            <button type="button" class="btn btn-outline-secondary copy-btn" data-copy="{{ created_session.presenter_url }}">Copy</button>
+                <div class="collapse{% if form_error %} show{% endif %}" id="new-session-form">
+                    <p class="text-muted">Leave filenames empty to use page001.pdf, page002.pdf, and so on under the base URL. Or list one file path per line, such as intro.mp4. A listed file is used instead of the page count.</p>
+                    {% if form_error %}
+                    <div class="alert alert-danger" role="alert">{{ form_error }}</div>
+                    {% endif %}
+                    <form method="post" class="row g-3 mb-4">
+                        {% csrf_token %}
+                        <div class="col-12">
+                            <label class="form-label" for="base_url">File base URL</label>
+                            <input class="form-control" id="base_url" name="base_url" required value="{{ form_data.base_url }}">
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label" for="files">Files</label>
+                            <textarea class="form-control" id="files" name="files" rows="4" placeholder="intro.mp4">{{ form_data.files }}</textarea>
+                            <div class="form-text">Optional. One .pdf or .mp4 path per line. When set, these paths replace the page count.</div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="page_count">Page count</label>
+                            <input class="form-control" type="number" min="1" step="1" id="page_count" name="page_count" value="{{ form_data.page_count }}">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="complete_url">Subject completion URL</label>
+                            <input class="form-control" id="complete_url" name="complete_url" value="{{ form_data.complete_url }}" placeholder="Optional">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label" for="staff_complete_url">Staff completion URL</label>
+                            <input class="form-control" id="staff_complete_url" name="staff_complete_url" value="{{ form_data.staff_complete_url }}" placeholder="Optional">
+                        </div>
+                        <div class="col-12">
+                            <button type="submit" class="btn btn-outline-success">Create session <i class="fas fa-plus"></i></button>
+                        </div>
+                    </form>
+                </div>
+
+                <div class="table-responsive sessions-table">
+                    <table class="table table-hover">
+                        <caption style="caption-side:top;text-align:center;">Sessions</caption>
+                        <thead>
+                            <tr>
+                                <th scope="col" class="table_header">Session</th>
+                                <th scope="col" class="text-center table_header">Page</th>
+                                <th scope="col" class="text-center table_header">Subjects</th>
+                                <th scope="col" class="text-center table_header">Started</th>
+                                <th scope="col" class="text-center table_header">Control</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for session in sessions %}
+                            <tr{% if created_session and session.session_id == created_session.session_id %} class="table-success"{% endif %}>
+                                <td>
+                                    <a href="{{ session.presenter_url }}" target="_blank" rel="noopener"><code>{{ session.session_id }}</code></a>
+                                    <div class="small text-muted text-break">{{ session.base_url }}</div>
+                                </td>
+                                <td class="text-center">{{ session.current_page }} / {{ session.total_pages }}</td>
+                                <td class="text-center">{{ session.subject_count }}</td>
+                                <td class="text-center">{{ session.created_label }}</td>
+                                <td class="text-center text-nowrap">
+                                    <a class="btn btn-primary btn-sm" href="{{ session.presenter_url }}" target="_blank" rel="noopener">Presenter</a>
+                                    <a class="btn btn-outline-primary btn-sm" href="{{ session.status_url }}">Status</a>
+                                    <div class="dropdown dropup d-inline-block">
+                                        <button type="button" class="btn btn-outline-secondary btn-sm dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                                            Links
+                                        </button>
+                                        <ul class="dropdown-menu dropdown-menu-end">
+                                            <li>
+                                                <button type="button" class="dropdown-item copy-btn" data-copy="{{ session.presenter_url }}">Copy presenter</button>
+                                            </li>
+                                            <li>
+                                                <button type="button" class="dropdown-item copy-btn" data-copy="{{ session.subject_pattern_url }}">Copy subject</button>
+                                            </li>
+                                            <li>
+                                                <button type="button" class="dropdown-item copy-btn" data-copy="{{ session.subject_join_url }}">Copy join link</button>
+                                            </li>
+                                        </ul>
+                                    </div>
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="5" class="text-muted text-center">No sessions yet. Create one above, or open a presenter link with its usual parameters.</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                <p class="text-muted small mb-0">Connection counts update when you reload this page. Sessions stay saved, including after instructions end, so the same presenter link can be used again.</p>
+            </div>
         </div>
     </div>
-    <div class="mb-2">
-        <div class="form-label">Subject</div>
-        <div class="input-group">
-            <input type="text" class="form-control" readonly value="{{ created_session.subject_pattern_url }}">
-            <button type="button" class="btn btn-outline-secondary copy-btn" data-copy="{{ created_session.subject_pattern_url }}">Copy</button>
-        </div>
-    </div>
-    <div>
-        <div class="form-label">Subject join</div>
-        <div class="input-group">
-            <input type="text" class="form-control" readonly value="{{ created_session.subject_join_url }}">
-            <button type="button" class="btn btn-outline-secondary copy-btn" data-copy="{{ created_session.subject_join_url }}">Copy</button>
-        </div>
-    </div>
 </div>
-{% endif %}
-
-<h2 class="h5">Current sessions</h2>
-<p class="text-muted">Connection counts update when you reload this page. Sessions stay saved, including after instructions end, so the same presenter link can be used again.</p>
-<p><a class="btn btn-outline-primary btn-sm" href="{% url 'instruction_presenter:staff_index' %}">Reload</a></p>
-
-<div class="table-responsive mb-5">
-    <table class="table table-sm align-middle">
-        <thead>
-            <tr>
-                <th>Session</th>
-                <th>Page</th>
-                <th>Subjects</th>
-                <th>Started</th>
-                <th></th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for session in sessions %}
-            <tr{% if created_session and session.session_id == created_session.session_id %} class="table-success"{% endif %}>
-                <td>
-                    <code>{{ session.session_id }}</code>
-                    <div class="small text-muted text-break">{{ session.base_url }}</div>
-                </td>
-                <td>{{ session.current_page }} / {{ session.total_pages }}</td>
-                <td>{{ session.subject_count }}</td>
-                <td>{{ session.created_label }}</td>
-                <td class="text-nowrap">
-                    <a class="btn btn-primary btn-sm" href="{{ session.presenter_url }}" target="_blank" rel="noopener">Presenter</a>
-                    <a class="btn btn-outline-primary btn-sm" href="{{ session.status_url }}">Status</a>
-                    <button type="button" class="btn btn-outline-secondary btn-sm copy-btn" data-copy="{{ session.presenter_url }}">Copy presenter</button>
-                    <button type="button" class="btn btn-outline-secondary btn-sm copy-btn" data-copy="{{ session.subject_pattern_url }}">Copy subject</button>
-                    <button type="button" class="btn btn-outline-secondary btn-sm copy-btn" data-copy="{{ session.subject_join_url }}">Copy join link</button>
-                </td>
-            </tr>
-            {% empty %}
-            <tr>
-                <td colspan="5" class="text-muted">No sessions yet. Create one below, or open a presenter link with its usual parameters.</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-</div>
-
-<h2 class="h5">New session</h2>
-<p class="text-muted">Leave filenames empty to use page001.pdf, page002.pdf, and so on under the base URL. Or list one file path per line, such as intro.mp4. A listed file is used instead of the page count.</p>
-{% if form_error %}
-<div class="alert alert-danger" role="alert">{{ form_error }}</div>
-{% endif %}
-<form method="post" class="row g-3">
-    {% csrf_token %}
-    <div class="col-12">
-        <label class="form-label" for="base_url">File base URL</label>
-        <input class="form-control" id="base_url" name="base_url" required value="{{ form_data.base_url }}">
-    </div>
-    <div class="col-12">
-        <label class="form-label" for="files">Files</label>
-        <textarea class="form-control" id="files" name="files" rows="4" placeholder="intro.mp4">{{ form_data.files }}</textarea>
-        <div class="form-text">Optional. One .pdf or .mp4 path per line. When set, these paths replace the page count.</div>
-    </div>
-    <div class="col-md-4">
-        <label class="form-label" for="page_count">Page count</label>
-        <input class="form-control" type="number" min="1" step="1" id="page_count" name="page_count" value="{{ form_data.page_count }}">
-    </div>
-    <div class="col-md-4">
-        <label class="form-label" for="complete_url">Subject completion URL</label>
-        <input class="form-control" id="complete_url" name="complete_url" value="{{ form_data.complete_url }}" placeholder="Optional">
-    </div>
-    <div class="col-md-4">
-        <label class="form-label" for="staff_complete_url">Staff completion URL</label>
-        <input class="form-control" id="staff_complete_url" name="staff_complete_url" value="{{ form_data.staff_complete_url }}" placeholder="Optional">
-    </div>
-    <div class="col-12">
-        <button type="submit" class="btn btn-primary">Create session</button>
-    </div>
-</form>
 {% endblock %}
 
 {% block tail %}
