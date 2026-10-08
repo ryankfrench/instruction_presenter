@@ -254,8 +254,13 @@ LOGIN_URL = 'login'
 LOGIN_REDIRECT_URL = 'instruction_presenter:staff_index'
 LOGOUT_REDIRECT_URL = 'login'
 
-# Optional overrides (not in repo): must run last so ALLOWED_HOSTS / DEBUG / etc. win.
+# Environment overlay. Kept last so these values replace the defaults above.
+# Local development uses local_settings.py (gitignored). Azure uses prod_settings.py
+# when that file is absent.
 try:
     from .local_settings import *  # noqa: F403, E402
 except ImportError:
-    pass
+    try:
+        from .prod_settings import *  # noqa: F403, E402
+    except ImportError:
+        pass
