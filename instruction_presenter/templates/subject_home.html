@@ -61,6 +61,7 @@ html, body {
 
     let isPageChange = false;
     let socket = null;
+    let reconnectTimer = null;
 
     function showClosedByStaff() {
         document.body.innerHTML = '<div class="container py-5 text-center"><h1>You can close this window</h1><p>Instructions for this screen were closed by staff.</p></div>';
@@ -97,12 +98,20 @@ html, body {
 
         socket.onclose = function() {
             if (!isPageChange) {
-                setTimeout(connectWebSocket, 1000);
+                reconnectTimer = setTimeout(connectWebSocket, 1000);
             }
         };
 
         return socket;
     }
+
+    window.addEventListener('pagehide', () => {
+        isPageChange = true;
+        clearTimeout(reconnectTimer);
+        if (socket && socket.readyState < WebSocket.CLOSING) {
+            socket.close();
+        }
+    });
 
     connectWebSocket();
 

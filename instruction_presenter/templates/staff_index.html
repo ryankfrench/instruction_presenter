@@ -82,19 +82,24 @@
 </div>
 
 <h2 class="h5">New session</h2>
-<p class="text-muted">PDFs are named page001.pdf, page002.pdf, and so on under the base URL.</p>
+<p class="text-muted">Leave filenames empty to use page001.pdf, page002.pdf, and so on under the base URL. Or list one file path per line, such as intro.mp4. A listed file is used instead of the page count.</p>
 {% if form_error %}
 <div class="alert alert-danger" role="alert">{{ form_error }}</div>
 {% endif %}
 <form method="post" class="row g-3">
     {% csrf_token %}
     <div class="col-12">
-        <label class="form-label" for="base_url">PDF base URL</label>
+        <label class="form-label" for="base_url">File base URL</label>
         <input class="form-control" id="base_url" name="base_url" required value="{{ form_data.base_url }}">
+    </div>
+    <div class="col-12">
+        <label class="form-label" for="files">Files</label>
+        <textarea class="form-control" id="files" name="files" rows="4" placeholder="intro.mp4">{{ form_data.files }}</textarea>
+        <div class="form-text">Optional. One .pdf or .mp4 path per line. When set, these paths replace the page count.</div>
     </div>
     <div class="col-md-4">
         <label class="form-label" for="page_count">Page count</label>
-        <input class="form-control" type="number" min="1" step="1" id="page_count" name="page_count" required value="{{ form_data.page_count }}">
+        <input class="form-control" type="number" min="1" step="1" id="page_count" name="page_count" value="{{ form_data.page_count }}">
     </div>
     <div class="col-md-4">
         <label class="form-label" for="complete_url">Subject completion URL</label>

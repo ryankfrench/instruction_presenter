@@ -1,4 +1,4 @@
-"""Instruction session manifest: PDF list, completion URLs, cache helpers."""
+"""Instruction session manifest: file list, completion URLs, cache helpers."""
 
 from __future__ import annotations
 
@@ -47,13 +47,23 @@ class InstructionManifest:
     def total_pages(self) -> int:
         return len(self.files)
 
-    def pdf_url_for_page(self, page: int) -> str:
+    def file_url_for_page(self, page: int) -> str:
         """1-based page index into files."""
         if page < 1 or page > len(self.files):
             raise IndexError('page out of range')
         filename = self.files[page - 1]
         base = self.base_url if self.base_url.endswith('/') else self.base_url + '/'
         return urljoin(base, filename)
+
+    def pdf_url_for_page(self, page: int) -> str:
+        """1-based page index into files."""
+        return self.file_url_for_page(page)
+
+    def media_kind_for_page(self, page: int) -> str | None:
+        """``pdf`` or ``video`` for a 1-based page, or None when the file type is unsupported."""
+        if page < 1 or page > len(self.files):
+            raise IndexError('page out of range')
+        return media_kind_for_filename(self.files[page - 1])
 
 
 def default_complete_url_from_base(base_url: str) -> str:
@@ -129,8 +139,26 @@ def subject_completion_overlay_allowed(url: str) -> bool:
     return is_safe_redirect_url(url)
 
 
+def media_kind_for_filename(filename: str) -> str | None:
+    """``pdf`` or ``video`` from the file suffix, or None when it is not a supported type."""
+    name = (filename or '').strip()
+    name = name.split('?', 1)[0].split('#', 1)[0]
+    if '.' not in name:
+        return None
+    ext = name.rsplit('.', 1)[-1].lower()
+    if ext == 'pdf':
+        return 'pdf'
+    if ext == 'mp4':
+        return 'video'
+    return None
+
+
+def files_are_supported(files: tuple[str, ...] | list[str]) -> bool:
+    return bool(files) and all(media_kind_for_filename(name) is not None for name in files)
+
+
 def has_manifest_params(query: QueryDict) -> bool:
-    """True when URL has base_url and at least one PDF filename (f=). complete_url is optional on staff links."""
+    """True when URL has base_url and at least one filename (f=). complete_url is optional on staff links."""
     return bool(query.get('base_url') and query.getlist('f'))
 
 
@@ -166,6 +194,8 @@ def build_manifest_from_query(
     staff_complete = staff_complete.strip() if staff_complete else None
 
     if not base_url or not files or not _base_url_ok(base_url):
+        return None
+    if not files_are_supported(files):
         return None
     if complete_raw:
         if not is_safe_redirect_url(complete_raw):
@@ -242,3 +272,7 @@ def ensure_manifest(request: HttpRequest, session_id: str) -> InstructionManifes
 
 def current_pdf_url(manifest: InstructionManifest, page: int) -> str:
     return manifest.pdf_url_for_page(page)
+
+
+def current_file_url(manifest: InstructionManifest, page: int) -> str:
+    return manifest.file_url_for_page(page)

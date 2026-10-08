@@ -11,6 +11,8 @@
         <a href="{% url 'instruction_presenter:staff_index' %}">All sessions</a>
     </div>
 
+    <p id="video-autoplay-note" class="alert alert-info" role="note"{% if not status.has_video %} hidden{% endif %}>Using Firefox with autoplay with sound enabled is the only way to control video playback sound without permission.</p>
+
     <dl class="row">
         <dt class="col-sm-3">Session</dt>
         <dd class="col-sm-9"><code id="session-id">{{ status.session_id }}</code></dd>
@@ -26,7 +28,7 @@
         <dd class="col-sm-9 text-break" id="complete-url">{{ status.complete_url|default:"—" }}</dd>
         <dt class="col-sm-3">Staff completion URL</dt>
         <dd class="col-sm-9 text-break" id="staff-complete-url">{{ status.staff_complete_url|default:"—" }}</dd>
-        <dt class="col-sm-3">PDF files</dt>
+        <dt class="col-sm-3">Media files</dt>
         <dd class="col-sm-9">
             <ul id="file-list" class="mb-0" style="max-height: 12rem; overflow: auto;">
                 {% for filename in status.files %}
@@ -101,6 +103,7 @@
         document.getElementById("base-url").textContent = data.base_url;
         document.getElementById("complete-url").textContent = textOrDash(data.complete_url);
         document.getElementById("staff-complete-url").textContent = textOrDash(data.staff_complete_url);
+        document.getElementById("video-autoplay-note").hidden = !data.has_video;
 
         const fileList = document.getElementById("file-list");
         fileList.replaceChildren();

@@ -5,7 +5,15 @@ from channels.generic.websocket import AsyncWebsocketConsumer
 from django.core.cache import cache
 
 from instruction_presenter.manifest import get_cached_manifest, manifest_cache_key
-from instruction_presenter.session_state import adjust_page, unregister_session
+from instruction_presenter.session_state import (
+    adjust_page,
+    begin_playback,
+    get_current_page,
+    media_command_for_join,
+    pause_playback,
+    unregister_session,
+    video_ready_counts,
+)
 
 
 class StaffConsumer(AsyncWebsocketConsumer):
@@ -15,6 +23,8 @@ class StaffConsumer(AsyncWebsocketConsumer):
 
         await self.channel_layer.group_add(self.group_name, self.channel_name)
         await self.accept()
+        await self.send_join_media()
+        await self.send_video_ready_counts()
 
     async def disconnect(self, close_code):
         await self.channel_layer.group_discard(self.group_name, self.channel_name)
@@ -27,6 +37,10 @@ class StaffConsumer(AsyncWebsocketConsumer):
             await self.previous_page()
         elif action == 'next_page':
             await self.next_page()
+        elif action == 'play_media':
+            await self.play_media()
+        elif action == 'pause_media':
+            await self.pause_media()
         elif action == 'end_instructions':
             await self.send_end_instructions()
 
@@ -69,6 +83,56 @@ class StaffConsumer(AsyncWebsocketConsumer):
         await sync_to_async(cache.delete)(manifest_cache_key(self.session_id))
         unregister_session(self.session_id)
 
+    async def current_page_is_video(self) -> bool:
+        manifest = await sync_to_async(get_cached_manifest)(self.session_id)
+        if not manifest or manifest.total_pages == 0:
+            return False
+        page = await get_current_page(self.session_id)
+        page = min(max(page, 1), manifest.total_pages)
+        return manifest.media_kind_for_page(page) == 'video'
+
+    async def play_media(self):
+        if not await self.current_page_is_video():
+            return
+        await self.broadcast_media(begin_playback(self.session_id))
+
+    async def pause_media(self):
+        if not await self.current_page_is_video():
+            return
+        await self.broadcast_media(pause_playback(self.session_id))
+
+    async def broadcast_media(self, payload: dict):
+        event = {
+            'type': 'media_command',
+            'command': payload['command'],
+            'position': payload['position'],
+            'server_time': payload['server_time'],
+        }
+        if 'play_at' in payload:
+            event['play_at'] = payload['play_at']
+        await self.channel_layer.group_send(self.group_name, event)
+
+    async def send_join_media(self):
+        if not await self.current_page_is_video():
+            return
+        payload = media_command_for_join(self.session_id)
+        if payload:
+            await self.send(text_data=json.dumps(payload))
+
+    async def send_video_ready_counts(self):
+        if not await self.current_page_is_video():
+            return
+        enabled, total = video_ready_counts(self.session_id)
+        await self.send(
+            text_data=json.dumps(
+                {
+                    'type': 'video_enabled',
+                    'enabled': enabled,
+                    'total': total,
+                }
+            )
+        )
+
     async def send_update_page(self, page_number):
         await self.channel_layer.group_send(
             self.group_name,
@@ -100,9 +164,23 @@ class StaffConsumer(AsyncWebsocketConsumer):
             )
         )
 
+    async def media_command(self, event):
+        message = {
+            'type': 'media_command',
+            'command': event['command'],
+            'position': event['position'],
+            'server_time': event['server_time'],
+        }
+        if event.get('play_at') is not None:
+            message['play_at'] = event['play_at']
+        await self.send(text_data=json.dumps(message))
+
     async def presence_changed(self, event):
-        """Subject connect and disconnect notices are for the status page."""
-        return
+        """Subject connect and disconnect update the ready count on video pages."""
+        await self.send_video_ready_counts()
+
+    async def video_enabled(self, event):
+        await self.send_video_ready_counts()
 
     async def close_subject(self, event):
         """Close-tab commands are delivered to subject screens."""

@@ -16,9 +16,15 @@ from instruction_presenter.manifest import (
 )
 from instruction_presenter.routing import websocket_urlpatterns
 from instruction_presenter.session_state import (
+    PLAY_LEAD_SECONDS,
+    adjust_page,
+    begin_playback,
     clear_ephemeral_state,
     get_current_page_sync,
+    get_media_clock,
     list_subject_groups,
+    media_command_for_join,
+    pause_playback,
     register_subject,
     registered_sessions,
     set_current_page,
@@ -225,6 +231,165 @@ class StaffIndexTests(TestCase):
         self.assertEqual(rows[0]['session_id'], str(session_id))
         self.assertIn('page001.pdf', rows[0]['presenter_path'])
 
+    def test_create_session_from_file_list(self):
+        self.client.login(username='staffer', password='secret-pass')
+        response = self.client.post(
+            reverse('instruction_presenter:staff_index'),
+            {
+                'base_url': 'https://localhost/static/deck/',
+                'page_count': '',
+                'files': 'intro.mp4\npage002.pdf',
+                'complete_url': '',
+                'staff_complete_url': '',
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        follow = self.client.get(response.url)
+        self.assertContains(follow, 'intro.mp4')
+        self.assertContains(follow, 'page002.pdf')
+
+    def test_create_session_rejects_unsupported_file(self):
+        self.client.login(username='staffer', password='secret-pass')
+        response = self.client.post(
+            reverse('instruction_presenter:staff_index'),
+            {
+                'base_url': 'https://localhost/static/deck/',
+                'page_count': '',
+                'files': 'notes.txt',
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Each file must be a .pdf or .mp4.')
+        self.assertEqual(index_rows(), [])
+
+
+class VideoPageTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        clear_ephemeral_state()
+        self.session_id = uuid4()
+        self.player_key = uuid4()
+        set_cached_manifest(
+            str(self.session_id),
+            InstructionManifest(
+                base_url='https://localhost/static/deck/',
+                files=('page001.pdf', 'intro.mp4'),
+                complete_url='',
+                staff_complete_url=None,
+            ),
+        )
+
+    def test_pdf_page_still_uses_pdf_viewer(self):
+        staff = self.client.get(
+            reverse('instruction_presenter:staff_home', args=[self.session_id])
+        )
+        subject = self.client.get(
+            reverse(
+                'instruction_presenter:subject_home',
+                args=[self.session_id, self.player_key],
+            )
+        )
+        self.assertContains(staff, 'pdf.min.js')
+        self.assertNotContains(staff, 'id="instruction-video"')
+        self.assertContains(subject, 'pdf.min.js')
+        self.assertNotContains(subject, 'id="instruction-video"')
+
+    def test_mp4_page_uses_video_player(self):
+        async_to_sync(set_current_page)(str(self.session_id), 2)
+        staff = self.client.get(
+            reverse('instruction_presenter:staff_home', args=[self.session_id])
+        )
+        subject = self.client.get(
+            reverse(
+                'instruction_presenter:subject_home',
+                args=[self.session_id, self.player_key],
+            )
+        )
+        self.assertContains(staff, 'id="instruction-video"')
+        self.assertContains(staff, 'intro.mp4')
+        self.assertContains(staff, 'Click to enable video')
+        self.assertContains(staff, 'Ready for Video: 0/0')
+        self.assertContains(staff, 'id="play-btn"')
+        self.assertNotContains(staff, 'pdf.min.js')
+        self.assertNotContains(staff, 'Read Aloud')
+        self.assertContains(subject, 'id="instruction-video"')
+        self.assertContains(subject, 'intro.mp4')
+        self.assertContains(subject, 'Ready to play video')
+        self.assertNotContains(subject, 'Click to enable video')
+        self.assertNotContains(subject, 'id="play-btn"')
+        self.assertNotContains(subject, 'pdf.min.js')
+
+    def test_unsupported_extension_is_rejected(self):
+        response = self.client.get(
+            reverse('instruction_presenter:staff_home', args=[uuid4()]),
+            {
+                'base_url': 'https://localhost/static/deck/',
+                'f': 'notes.txt',
+            },
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertContains(
+            response,
+            'Each file must be a .pdf or .mp4.',
+            status_code=400,
+        )
+
+        bad_session = uuid4()
+        set_cached_manifest(
+            str(bad_session),
+            InstructionManifest(
+                base_url='https://localhost/static/deck/',
+                files=('notes.txt',),
+                complete_url='',
+                staff_complete_url=None,
+            ),
+        )
+        subject = self.client.get(
+            reverse(
+                'instruction_presenter:subject_home',
+                args=[bad_session, self.player_key],
+            )
+        )
+        self.assertEqual(subject.status_code, 400)
+
+
+class MediaClockTests(TestCase):
+    def setUp(self):
+        clear_ephemeral_state()
+        self.session_id = str(uuid4())
+
+    def test_play_at_is_a_lead_after_server_time(self):
+        payload = begin_playback(self.session_id, now=1_700_000_000.0)
+        self.assertEqual(payload['command'], 'play')
+        self.assertEqual(payload['position'], 0.0)
+        self.assertEqual(payload['server_time'], 1_700_000_000.0)
+        self.assertAlmostEqual(
+            payload['play_at'] - payload['server_time'],
+            PLAY_LEAD_SECONDS,
+            places=5,
+        )
+
+    def test_pause_and_resume_keep_media_position(self):
+        begin_playback(self.session_id, now=1000.0)
+        paused = pause_playback(self.session_id, now=1002.0)
+        self.assertEqual(paused['command'], 'pause')
+        self.assertAlmostEqual(paused['position'], 1.6)
+        resumed = begin_playback(self.session_id, now=1010.0)
+        self.assertAlmostEqual(resumed['position'], 1.6)
+        self.assertAlmostEqual(resumed['play_at'], 1010.4)
+
+    def test_join_targets_the_shared_media_time(self):
+        begin_playback(self.session_id, now=1000.0)
+        joined = media_command_for_join(self.session_id, now=1005.0)
+        self.assertEqual(joined['command'], 'play')
+        self.assertAlmostEqual(joined['position'], 5.0)
+        self.assertAlmostEqual(joined['play_at'], 1005.4)
+
+    def test_page_change_clears_the_clock(self):
+        begin_playback(self.session_id, now=1000.0)
+        async_to_sync(adjust_page)(self.session_id, 1, 2)
+        self.assertIsNone(get_media_clock(self.session_id))
+
 
 class SessionRegistryTests(TestCase):
     def setUp(self):
@@ -336,4 +501,175 @@ class StatusSocketTests(TestCase):
 
         await status.disconnect()
         await subject.disconnect()
+        await staff.disconnect()
+
+
+class VideoSyncSocketTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        clear_ephemeral_state()
+        self.session_id = str(uuid4())
+        self.player_key = str(uuid4())
+        set_cached_manifest(
+            self.session_id,
+            InstructionManifest(
+                base_url='https://localhost/static/deck/',
+                files=('intro.mp4', 'page002.pdf'),
+                complete_url='',
+                staff_complete_url=None,
+            ),
+        )
+
+    def test_play_pause_and_page_change(self):
+        async_to_sync(self._exercise)()
+
+    async def _exercise(self):
+        from channels.testing import WebsocketCommunicator
+
+        status = WebsocketCommunicator(
+            _ws_application,
+            f'/ws/instructions/{self.session_id}/status/',
+        )
+        subject = WebsocketCommunicator(
+            _ws_application,
+            f'/ws/instructions/{self.session_id}/{self.player_key}/',
+        )
+        staff = WebsocketCommunicator(
+            _ws_application,
+            f'/ws/instructions/{self.session_id}/',
+        )
+        self.assertTrue((await subject.connect())[0])
+        self.assertTrue((await staff.connect())[0])
+        self.assertTrue((await status.connect())[0])
+        await status.receive_json_from()
+        ready = await staff.receive_json_from()
+        self.assertEqual(ready['type'], 'video_enabled')
+        self.assertEqual(ready['enabled'], 0)
+        self.assertEqual(ready['total'], 1)
+
+        await staff.send_json_to({'action': 'play_media'})
+        staff_play = await staff.receive_json_from()
+        subject_play = await subject.receive_json_from()
+        self.assertEqual(staff_play['type'], 'media_command')
+        self.assertEqual(staff_play['command'], 'play')
+        self.assertEqual(subject_play['command'], 'play')
+        self.assertGreater(staff_play['play_at'], staff_play['server_time'])
+        self.assertAlmostEqual(
+            staff_play['play_at'] - staff_play['server_time'],
+            PLAY_LEAD_SECONDS,
+            places=5,
+        )
+        self.assertTrue(await status.receive_nothing(timeout=0.1))
+
+        await subject.disconnect()
+        left = await staff.receive_json_from()
+        self.assertEqual(left['type'], 'video_enabled')
+        self.assertEqual(left['total'], 0)
+        subject = WebsocketCommunicator(
+            _ws_application,
+            f'/ws/instructions/{self.session_id}/{self.player_key}/',
+        )
+        self.assertTrue((await subject.connect())[0])
+        returned = await staff.receive_json_from()
+        self.assertEqual(returned['type'], 'video_enabled')
+        self.assertEqual(returned['total'], 1)
+        joined = await subject.receive_json_from()
+        self.assertEqual(joined['type'], 'media_command')
+        self.assertEqual(joined['command'], 'play')
+        self.assertGreater(joined['play_at'], joined['server_time'])
+
+        await staff.send_json_to({'action': 'pause_media'})
+        staff_pause = await staff.receive_json_from()
+        subject_pause = await subject.receive_json_from()
+        self.assertEqual(staff_pause['command'], 'pause')
+        self.assertEqual(subject_pause['command'], 'pause')
+        self.assertGreaterEqual(staff_pause['position'], 0)
+        self.assertNotIn('play_at', staff_pause)
+
+        await staff.send_json_to({'action': 'next_page'})
+        staff_page = await staff.receive_json_from()
+        subject_page = await subject.receive_json_from()
+        self.assertEqual(staff_page['type'], 'update_page')
+        self.assertEqual(subject_page['type'], 'update_page')
+        self.assertIsNone(get_media_clock(self.session_id))
+        self.assertEqual(get_current_page_sync(self.session_id), 2)
+
+        await status.disconnect()
+        await subject.disconnect()
+        await staff.disconnect()
+
+
+class VideoReadyCountTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        clear_ephemeral_state()
+        self.session_id = str(uuid4())
+        self.player_a = str(uuid4())
+        self.player_b = str(uuid4())
+        set_cached_manifest(
+            self.session_id,
+            InstructionManifest(
+                base_url='https://localhost/static/deck/',
+                files=('intro.mp4',),
+                complete_url='',
+                staff_complete_url=None,
+            ),
+        )
+
+    def test_ready_count_tracks_subject_screens(self):
+        async_to_sync(self._exercise)()
+
+    async def _exercise(self):
+        from channels.testing import WebsocketCommunicator
+
+        status = WebsocketCommunicator(
+            _ws_application,
+            f'/ws/instructions/{self.session_id}/status/',
+        )
+        subject_a = WebsocketCommunicator(
+            _ws_application,
+            f'/ws/instructions/{self.session_id}/{self.player_a}/',
+        )
+        subject_b = WebsocketCommunicator(
+            _ws_application,
+            f'/ws/instructions/{self.session_id}/{self.player_b}/',
+        )
+        staff = WebsocketCommunicator(
+            _ws_application,
+            f'/ws/instructions/{self.session_id}/',
+        )
+        self.assertTrue((await status.connect())[0])
+        await status.receive_json_from()
+        self.assertTrue((await staff.connect())[0])
+        initial = await staff.receive_json_from()
+        self.assertEqual(initial['type'], 'video_enabled')
+        self.assertEqual(initial['enabled'], 0)
+        self.assertEqual(initial['total'], 0)
+
+        self.assertTrue((await subject_a.connect())[0])
+        after_a = await staff.receive_json_from()
+        await status.receive_json_from()
+        self.assertEqual(after_a['enabled'], 0)
+        self.assertEqual(after_a['total'], 1)
+
+        self.assertTrue((await subject_b.connect())[0])
+        after_b = await staff.receive_json_from()
+        await status.receive_json_from()
+        self.assertEqual(after_b['enabled'], 0)
+        self.assertEqual(after_b['total'], 2)
+
+        await subject_a.send_json_to({'action': 'video_enabled'})
+        ready = await staff.receive_json_from()
+        self.assertEqual(ready['type'], 'video_enabled')
+        self.assertEqual(ready['enabled'], 1)
+        self.assertEqual(ready['total'], 2)
+        self.assertTrue(await status.receive_nothing(timeout=0.1))
+
+        await subject_b.disconnect()
+        remaining = await staff.receive_json_from()
+        self.assertEqual(remaining['enabled'], 1)
+        self.assertEqual(remaining['total'], 1)
+
+        await status.disconnect()
+        await subject_a.disconnect()
         await staff.disconnect()
