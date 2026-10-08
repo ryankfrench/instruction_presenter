@@ -33,7 +33,13 @@ CHANNEL_LAYERS = {
         'BACKEND': 'channels_redis.core.RedisChannelLayer',
         'CONFIG': {
             # 'hosts': [(os.environ['REDIS'])],
-            'hosts' :  [("localhost", 6379)],
+            # redis-py 8 defaults socket_timeout to 5s, the same as the
+            # channel layer's blocking pop, so an idle WebSocket is dropped.
+            'hosts': [{
+                'host': 'localhost',
+                'port': 6379,
+                'socket_timeout': None,
+            }],
             'prefix' : 'instruction_presenter',
             'capacity': 1500,
         },
