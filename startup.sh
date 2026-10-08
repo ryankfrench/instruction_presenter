@@ -3,4 +3,5 @@
 # Also enable Configuration → General settings → Web sockets = On.
 set -euo pipefail
 PORT="${PORT:-8000}"
+python manage.py migrate --noinput
 exec python -m daphne -b 0.0.0.0 -p "$PORT" config.asgi:application

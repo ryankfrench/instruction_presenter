@@ -1,4 +1,4 @@
-"""Instruction session manifest: file list, completion URLs, cache helpers."""
+"""Instruction session manifest: file list, completion URLs, persistence helpers."""
 
 from __future__ import annotations
 
@@ -8,32 +8,59 @@ from typing import Any
 from urllib.parse import urljoin, urlsplit
 
 from django.conf import settings
-from django.core.cache import cache
+from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.http import HttpRequest, QueryDict
 from django.http.request import split_domain_port, validate_host
 from django.utils.http import MAX_URL_LENGTH
 
 
-def manifest_cache_key(session_id: str) -> str:
-    return f'instruction_manifest:{session_id}'
-
-
-def subject_completion_cache_key(session_id: str, player_key: str) -> str:
-    return f'instruction_subject_complete:{session_id}:{player_key}'
-
-
 def set_subject_completion_url(session_id: str, player_key: str, url: str) -> None:
     """Per-subject completion redirect; used when subjects open with complete_url overlay only."""
-    ttl = getattr(settings, 'INSTRUCTION_MANIFEST_TTL', 86400)
-    cache.set(subject_completion_cache_key(session_id, player_key), url, ttl)
+    from instruction_presenter.models import InstructionSession, SubjectCompletion
+
+    try:
+        session = InstructionSession.objects.get(pk=session_id)
+    except (InstructionSession.DoesNotExist, ValidationError, ValueError):
+        return
+    SubjectCompletion.objects.update_or_create(
+        session=session,
+        player_key=player_key,
+        defaults={'complete_url': url},
+    )
 
 
 def get_subject_completion_url(session_id: str, player_key: str) -> str | None:
-    return cache.get(subject_completion_cache_key(session_id, player_key))
+    from instruction_presenter.models import SubjectCompletion
+
+    try:
+        row = SubjectCompletion.objects.get(session_id=session_id, player_key=player_key)
+    except (SubjectCompletion.DoesNotExist, ValidationError, ValueError):
+        return None
+    return row.complete_url
 
 
 def clear_subject_completion_url(session_id: str, player_key: str) -> None:
-    cache.delete(subject_completion_cache_key(session_id, player_key))
+    from instruction_presenter.models import SubjectCompletion
+
+    try:
+        SubjectCompletion.objects.filter(
+            session_id=session_id,
+            player_key=player_key,
+        ).delete()
+    except (ValidationError, ValueError):
+        return
+
+
+def completion_urls_for_session(session_id: str) -> dict[str, str]:
+    """player_key -> completion URL, snapshotted before a session is reset."""
+    from instruction_presenter.models import SubjectCompletion
+
+    try:
+        rows = SubjectCompletion.objects.filter(session_id=session_id)
+        return {str(row.player_key): row.complete_url for row in rows}
+    except (ValidationError, ValueError):
+        return {}
 
 
 @dataclass(frozen=True)
@@ -239,24 +266,58 @@ def manifest_from_dict(d: dict[str, Any]) -> InstructionManifest | None:
         return None
 
 
+def _manifest_from_session(session) -> InstructionManifest:
+    return InstructionManifest(
+        base_url=session.base_url,
+        files=tuple(session.files),
+        complete_url=session.complete_url or '',
+        staff_complete_url=session.staff_complete_url or None,
+    )
+
+
 def get_cached_manifest(session_id: str) -> InstructionManifest | None:
-    raw = cache.get(manifest_cache_key(session_id))
-    if not raw:
+    from instruction_presenter.models import InstructionSession
+
+    try:
+        session = InstructionSession.objects.get(pk=session_id)
+    except (InstructionSession.DoesNotExist, ValidationError, ValueError):
         return None
-    return manifest_from_dict(raw)
+    return _manifest_from_session(session)
 
 
 def set_cached_manifest(session_id: str, manifest: InstructionManifest) -> None:
-    ttl = getattr(settings, 'INSTRUCTION_MANIFEST_TTL', 86400)
-    cache.set(manifest_cache_key(session_id), manifest_to_dict(manifest), ttl)
-    from instruction_presenter.session_state import register_session
+    from instruction_presenter.models import InstructionSession
 
-    register_session(session_id)
+    defaults = {
+        'base_url': manifest.base_url,
+        'files': list(manifest.files),
+        'complete_url': manifest.complete_url,
+        'staff_complete_url': manifest.staff_complete_url,
+    }
+    with transaction.atomic():
+        session, created = InstructionSession.objects.get_or_create(
+            pk=session_id,
+            defaults=defaults,
+        )
+        if created:
+            return
+        for field, value in defaults.items():
+            setattr(session, field, value)
+        update_fields = list(defaults.keys()) + ['updated_at']
+        if session.current_page > len(manifest.files):
+            session.current_page = max(1, len(manifest.files))
+            session.media_playing = False
+            session.media_position = 0
+            session.media_anchor = None
+            update_fields.extend(
+                ['current_page', 'media_playing', 'media_position', 'media_anchor']
+            )
+        session.save(update_fields=update_fields)
 
 
 def ensure_manifest(request: HttpRequest, session_id: str) -> InstructionManifest | None:
     """
-    Return manifest from query params (and refresh cache) or from cache.
+    Return manifest from query params (and store it) or from the saved session.
     Staff may omit complete_url / staff_complete_url. Subjects may also omit
     complete_url; a query value overrides the session redirect for that subject.
     """

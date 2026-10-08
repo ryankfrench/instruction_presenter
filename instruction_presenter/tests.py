@@ -1,8 +1,8 @@
-import asyncio
 from urllib.parse import parse_qs, urlsplit
 from uuid import UUID, uuid4
 
 from asgiref.sync import async_to_sync
+from channels.db import database_sync_to_async
 from channels.routing import URLRouter
 from django.contrib.auth.models import User
 from django.core.cache import cache
@@ -71,8 +71,9 @@ class StaffIndexTests(TestCase):
         created = parse_qs(urlsplit(response.url).query)['created'][0]
         follow = self.client.get(response.url)
         self.assertContains(follow, 'Session created')
-        self.assertContains(follow, 'page001.pdf')
-        self.assertContains(follow, 'page002.pdf')
+        stored = get_cached_manifest(created)
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored.files, ('page001.pdf', 'page002.pdf'))
         self.assertContains(follow, '{player_key}')
         self.assertContains(follow, 'complete_url=https%3A%2F%2Flocalhost%2Fdone')
         self.assertContains(follow, 'Copy join link')
@@ -229,7 +230,12 @@ class StaffIndexTests(TestCase):
         rows = index_rows()
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]['session_id'], str(session_id))
-        self.assertIn('page001.pdf', rows[0]['presenter_path'])
+        self.assertEqual(
+            rows[0]['presenter_path'],
+            reverse('instruction_presenter:staff_home', args=[session_id]),
+        )
+        stored = get_cached_manifest(str(session_id))
+        self.assertEqual(stored.files, ('page001.pdf', 'page002.pdf'))
 
     def test_create_session_from_file_list(self):
         self.client.login(username='staffer', password='secret-pass')
@@ -244,9 +250,9 @@ class StaffIndexTests(TestCase):
             },
         )
         self.assertEqual(response.status_code, 302)
-        follow = self.client.get(response.url)
-        self.assertContains(follow, 'intro.mp4')
-        self.assertContains(follow, 'page002.pdf')
+        created = parse_qs(urlsplit(response.url).query)['created'][0]
+        stored = get_cached_manifest(created)
+        self.assertEqual(stored.files, ('intro.mp4', 'page002.pdf'))
 
     def test_create_session_rejects_unsupported_file(self):
         self.client.login(username='staffer', password='secret-pass')
@@ -295,7 +301,7 @@ class VideoPageTests(TestCase):
         self.assertNotContains(subject, 'id="instruction-video"')
 
     def test_mp4_page_uses_video_player(self):
-        async_to_sync(set_current_page)(str(self.session_id), 2)
+        set_current_page(str(self.session_id), 2)
         staff = self.client.get(
             reverse('instruction_presenter:staff_home', args=[self.session_id])
         )
@@ -357,6 +363,15 @@ class MediaClockTests(TestCase):
     def setUp(self):
         clear_ephemeral_state()
         self.session_id = str(uuid4())
+        set_cached_manifest(
+            self.session_id,
+            InstructionManifest(
+                base_url='https://localhost/static/deck/',
+                files=('intro.mp4', 'page002.pdf'),
+                complete_url='',
+                staff_complete_url=None,
+            ),
+        )
 
     def test_play_at_is_a_lead_after_server_time(self):
         payload = begin_playback(self.session_id, now=1_700_000_000.0)
@@ -387,7 +402,7 @@ class MediaClockTests(TestCase):
 
     def test_page_change_clears_the_clock(self):
         begin_playback(self.session_id, now=1000.0)
-        async_to_sync(adjust_page)(self.session_id, 1, 2)
+        adjust_page(self.session_id, 1, 2)
         self.assertIsNone(get_media_clock(self.session_id))
 
 
@@ -396,7 +411,7 @@ class SessionRegistryTests(TestCase):
         cache.clear()
         clear_ephemeral_state()
 
-    def test_manifest_cache_registers_and_missing_cache_drops_row(self):
+    def test_saved_session_remains_after_cache_clear(self):
         session_id = str(uuid4())
         set_cached_manifest(
             session_id,
@@ -409,8 +424,10 @@ class SessionRegistryTests(TestCase):
         )
         self.assertEqual(len(registered_sessions()), 1)
         cache.clear()
-        self.assertEqual(index_rows(), [])
-        self.assertEqual(registered_sessions(), [])
+        rows = index_rows()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['session_id'], session_id)
+        self.assertEqual(len(registered_sessions()), 1)
 
     def test_subject_presence_groups_by_player_key(self):
         session_id = str(uuid4())
@@ -442,11 +459,16 @@ class StatusSocketTests(TestCase):
 
     def test_reset_close_and_end(self):
         async_to_sync(self._exercise)()
+        reopened = self.client.get(
+            reverse('instruction_presenter:staff_home', args=[self.session_id])
+        )
+        self.assertEqual(reopened.status_code, 200)
+        self.assertContains(reopened, 'Page 1')
 
     async def _exercise(self):
         from channels.testing import WebsocketCommunicator
 
-        await set_current_page(self.session_id, 2)
+        await database_sync_to_async(set_current_page)(self.session_id, 2)
         status = WebsocketCommunicator(
             _ws_application,
             f'/ws/instructions/{self.session_id}/status/',
@@ -481,7 +503,10 @@ class StatusSocketTests(TestCase):
         self.assertEqual(staff_page['message'], 1)
         self.assertEqual(subject_page['message'], 1)
         self.assertEqual(reset_snapshot['current_page'], 1)
-        self.assertEqual(get_current_page_sync(self.session_id), 1)
+        self.assertEqual(
+            await database_sync_to_async(get_current_page_sync)(self.session_id),
+            1,
+        )
 
         await status.send_json_to(
             {'action': 'close_subject', 'player_key': self.player_key}
@@ -489,15 +514,19 @@ class StatusSocketTests(TestCase):
         closed = await subject.receive_json_from()
         self.assertEqual(closed['type'], 'close_tab')
 
+        await database_sync_to_async(begin_playback)(self.session_id, now=1000.0)
         await staff.send_json_to({'action': 'end_instructions'})
         ended = await status.receive_json_from()
         self.assertEqual(ended['type'], 'session_ended')
-        for _ in range(20):
-            if get_cached_manifest(self.session_id) is None and not registered_sessions():
-                break
-            await asyncio.sleep(0.01)
-        self.assertIsNone(get_cached_manifest(self.session_id))
-        self.assertEqual(registered_sessions(), [])
+        manifest = await database_sync_to_async(get_cached_manifest)(self.session_id)
+        self.assertIsNotNone(manifest)
+        self.assertEqual(manifest.files, ('page001.pdf', 'page002.pdf'))
+        self.assertEqual(
+            await database_sync_to_async(get_current_page_sync)(self.session_id),
+            1,
+        )
+        self.assertIsNone(await database_sync_to_async(get_media_clock)(self.session_id))
+        self.assertEqual(len(await database_sync_to_async(registered_sessions)()), 1)
 
         await status.disconnect()
         await subject.disconnect()
@@ -591,8 +620,11 @@ class VideoSyncSocketTests(TestCase):
         subject_page = await subject.receive_json_from()
         self.assertEqual(staff_page['type'], 'update_page')
         self.assertEqual(subject_page['type'], 'update_page')
-        self.assertIsNone(get_media_clock(self.session_id))
-        self.assertEqual(get_current_page_sync(self.session_id), 2)
+        self.assertIsNone(await database_sync_to_async(get_media_clock)(self.session_id))
+        self.assertEqual(
+            await database_sync_to_async(get_current_page_sync)(self.session_id),
+            2,
+        )
 
         await status.disconnect()
         await subject.disconnect()

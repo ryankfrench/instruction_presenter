@@ -1,6 +1,6 @@
 import json
 
-from asgiref.sync import sync_to_async
+from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 
 from instruction_presenter.manifest import (
@@ -68,14 +68,14 @@ class SubjectConsumer(AsyncWebsocketConsumer):
         await self.send(text_data=json.dumps({'type': 'close_tab'}))
 
     async def send_join_media(self):
-        manifest = await sync_to_async(get_cached_manifest)(self.session_id)
+        manifest = await database_sync_to_async(get_cached_manifest)(self.session_id)
         if not manifest or manifest.total_pages == 0:
             return
-        page = await get_current_page(self.session_id)
+        page = await database_sync_to_async(get_current_page)(self.session_id)
         page = min(max(page, 1), manifest.total_pages)
         if manifest.media_kind_for_page(page) != 'video':
             return
-        payload = media_command_for_join(self.session_id)
+        payload = await database_sync_to_async(media_command_for_join)(self.session_id)
         if payload:
             await self.send(text_data=json.dumps(payload))
 
@@ -102,9 +102,12 @@ class SubjectConsumer(AsyncWebsocketConsumer):
         )
 
     async def end_instructions(self, event):
-        overlay = await sync_to_async(get_subject_completion_url)(
-            self.session_id, self.player_key
-        )
+        completions = event.get('completions') or {}
+        overlay = completions.get(self.player_key)
+        if not overlay:
+            overlay = await database_sync_to_async(get_subject_completion_url)(
+                self.session_id, self.player_key
+            )
         complete_url = overlay or event.get('complete_url') or ''
         await self.send(
             text_data=json.dumps(
@@ -114,6 +117,6 @@ class SubjectConsumer(AsyncWebsocketConsumer):
                 }
             )
         )
-        await sync_to_async(clear_subject_completion_url)(
+        await database_sync_to_async(clear_subject_completion_url)(
             self.session_id, self.player_key
         )

@@ -12,9 +12,29 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 import os
 from pathlib import Path
+from urllib.parse import parse_qs, unquote, urlparse
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def _load_dotenv() -> None:
+    """Load KEY=VALUE lines from a project .env without overriding existing env."""
+    path = BASE_DIR / '.env'
+    if not path.is_file():
+        return
+    for raw_line in path.read_text().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        key, value = line.split('=', 1)
+        key = key.strip()
+        if not key:
+            continue
+        os.environ.setdefault(key, value.strip().strip('"').strip("'"))
+
+
+_load_dotenv()
 
 
 def _hosts_from_env(var_name: str) -> list[str]:
@@ -117,16 +137,13 @@ CHANNEL_LAYERS = {
     },
 }
 
-# Shared across HTTP workers in-process only; use Redis cache for multi-worker.
+# Instruction sessions live in the database. This cache is unused by that data.
 CACHES = {
     'default': {
         'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
-        'LOCATION': 'instruction-presenter-manifest',
+        'LOCATION': 'instruction-presenter',
     }
 }
-
-# Seconds to keep instruction manifest (base_url, file list, redirect URLs).
-INSTRUCTION_MANIFEST_TTL = 86400
 
 # Hosts allowed in complete_url / staff_complete_url (comma-separated env).
 # If unset, manifest.redirect_allowed_hosts() falls back to ALLOWED_HOSTS.
@@ -142,12 +159,54 @@ INSTRUCTION_REDIRECT_REQUIRE_HTTPS = os.environ.get(
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+
+def _postgres_database_from_url(url: str) -> dict:
+    parsed = urlparse(url)
+    if parsed.scheme.lower() not in ('postgres', 'postgresql'):
+        raise ValueError(f'Unsupported DATABASE_URL scheme: {parsed.scheme}')
+    query = parse_qs(parsed.query)
+    options = {}
+    if query.get('sslmode'):
+        options['sslmode'] = query['sslmode'][-1]
+    config = {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': unquote(parsed.path.lstrip('/')),
+        'USER': unquote(parsed.username or ''),
+        'PASSWORD': unquote(parsed.password or ''),
+        'HOST': parsed.hostname or '',
+        'PORT': str(parsed.port or ''),
     }
-}
+    if options:
+        config['OPTIONS'] = options
+    return config
+
+
+def _databases_from_environment() -> dict:
+    """Postgres when DATABASE_URL or POSTGRES_HOST is set; otherwise SQLite."""
+    url = os.environ.get('DATABASE_URL', '').strip()
+    if url:
+        return {'default': _postgres_database_from_url(url)}
+    host = os.environ.get('POSTGRES_HOST', '').strip()
+    if host:
+        return {
+            'default': {
+                'ENGINE': 'django.db.backends.postgresql',
+                'NAME': os.environ.get('POSTGRES_DB', 'instruction_presenter'),
+                'USER': os.environ.get('POSTGRES_USER', 'instruction_presenter'),
+                'PASSWORD': os.environ.get('POSTGRES_PASSWORD', ''),
+                'HOST': host,
+                'PORT': os.environ.get('POSTGRES_PORT', '5432'),
+            }
+        }
+    return {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
+
+
+DATABASES = _databases_from_environment()
 
 
 # Password validation

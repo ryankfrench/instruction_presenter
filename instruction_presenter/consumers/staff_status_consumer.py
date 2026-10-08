@@ -1,6 +1,6 @@
 import json
 
-from asgiref.sync import sync_to_async
+from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 
 from instruction_presenter.session_state import reset_page
@@ -31,11 +31,11 @@ class StaffStatusConsumer(AsyncWebsocketConsumer):
             await self.close_subject_tabs(data.get('player_key') or '')
 
     async def reset_instructions(self):
-        payload = await sync_to_async(build_status_payload)(self.session_id)
+        payload = await database_sync_to_async(build_status_payload)(self.session_id)
         if payload is None:
             await self.send_snapshot()
             return
-        await reset_page(self.session_id)
+        await database_sync_to_async(reset_page)(self.session_id)
         await self.channel_layer.group_send(
             self.group_name,
             {
@@ -54,7 +54,7 @@ class StaffStatusConsumer(AsyncWebsocketConsumer):
         )
 
     async def send_snapshot(self):
-        payload = await sync_to_async(build_status_payload)(self.session_id)
+        payload = await database_sync_to_async(build_status_payload)(self.session_id)
         if payload is None:
             await self.send(text_data=json.dumps({'type': 'session_ended'}))
             return

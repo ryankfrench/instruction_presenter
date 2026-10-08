@@ -1,6 +1,7 @@
-"""Ephemeral per-session page index, media clock, session registry, and subject presence.
+"""Per-session page index and media clock in the database, plus live subject presence.
 
-All of this lives in-process and resets when the worker restarts.
+Page, playhead, and the session row survive a process restart. Subject presence
+is connection-scoped and stays in this process.
 """
 
 from __future__ import annotations
@@ -10,19 +11,58 @@ import time
 from collections import defaultdict
 from dataclasses import dataclass
 
+from django.core.exceptions import ValidationError
+from django.db import transaction
+from django.utils import timezone
+
 
 # Clients wait this long after server_time so a broadcast can reach them before start.
 PLAY_LEAD_SECONDS = 0.4
 
 _lock = threading.Lock()
-_pages: dict[str, int] = {}
-_clocks: dict[str, 'MediaClock'] = {}
-_sessions: dict[str, float] = {}
 _subjects: dict[str, dict[str, 'SubjectLink']] = defaultdict(dict)
 
 
 def _key(session_id: str) -> str:
     return str(session_id)
+
+
+def _get_session(session_id: str):
+    from instruction_presenter.models import InstructionSession
+
+    try:
+        return InstructionSession.objects.get(pk=_key(session_id))
+    except (InstructionSession.DoesNotExist, ValidationError, ValueError):
+        return None
+
+
+def _clock_from_session(session) -> MediaClock | None:
+    if session.media_anchor is None:
+        return None
+    return MediaClock(
+        playing=session.media_playing,
+        position=session.media_position,
+        anchor_server_time=session.media_anchor,
+    )
+
+
+def _write_clock(session, clock: MediaClock | None) -> None:
+    if clock is None:
+        session.media_playing = False
+        session.media_position = 0
+        session.media_anchor = None
+    else:
+        session.media_playing = clock.playing
+        session.media_position = clock.position
+        session.media_anchor = clock.anchor_server_time
+    session.save(
+        update_fields=[
+            'media_playing',
+            'media_position',
+            'media_anchor',
+            'updated_at',
+        ]
+    )
 
 
 @dataclass(frozen=True)
@@ -41,62 +81,96 @@ class MediaClock:
     anchor_server_time: float
 
 
-def register_session(session_id: str) -> None:
-    """Remember a session the first time its manifest is cached."""
-    sid = _key(session_id)
-    with _lock:
-        _sessions.setdefault(sid, time.time())
-
-
-def unregister_session(session_id: str) -> None:
-    """Drop a session and any subject presence after the manifest is cleared."""
-    sid = _key(session_id)
-    with _lock:
-        _sessions.pop(sid, None)
-        _subjects.pop(sid, None)
-        _clocks.pop(sid, None)
-
-
 def registered_sessions() -> list[tuple[str, float]]:
-    """Return (session_id, registered_at) pairs, oldest first."""
-    with _lock:
-        return sorted(_sessions.items(), key=lambda item: item[1])
+    """Return (session_id, created_at) pairs, oldest first."""
+    from instruction_presenter.models import InstructionSession
+
+    return [
+        (str(session.id), session.created_at.timestamp())
+        for session in InstructionSession.objects.order_by('created_at')
+    ]
 
 
-async def get_current_page(session_id: str) -> int:
-    with _lock:
-        return _pages.get(_key(session_id), 1)
+def reset_session_for_reuse(session_id: str) -> None:
+    """Return a finished session to page 1 so the same presenter URL can run again."""
+    from instruction_presenter.models import InstructionSession, SubjectCompletion
+
+    sid = _key(session_id)
+    with transaction.atomic():
+        try:
+            session = InstructionSession.objects.select_for_update().get(pk=sid)
+        except (InstructionSession.DoesNotExist, ValidationError, ValueError):
+            return
+        session.current_page = 1
+        session.media_playing = False
+        session.media_position = 0
+        session.media_anchor = None
+        session.save(
+            update_fields=[
+                'current_page',
+                'media_playing',
+                'media_position',
+                'media_anchor',
+                'updated_at',
+            ]
+        )
+        SubjectCompletion.objects.filter(session=session).delete()
 
 
-async def set_current_page(session_id: str, page: int) -> None:
-    with _lock:
-        _pages[_key(session_id)] = page
+def get_current_page(session_id: str) -> int:
+    session = _get_session(session_id)
+    if session is None:
+        return 1
+    return session.current_page
 
 
-async def adjust_page(session_id: str, delta: int, total_pages: int) -> tuple[int, bool]:
+def set_current_page(session_id: str, page: int) -> None:
+    from instruction_presenter.models import InstructionSession
+
+    InstructionSession.objects.filter(pk=_key(session_id)).update(
+        current_page=page,
+        updated_at=timezone.now(),
+    )
+
+
+def adjust_page(session_id: str, delta: int, total_pages: int) -> tuple[int, bool]:
     """Apply delta and clamp to [1, total_pages]. Returns (new_page, changed)."""
-    with _lock:
-        sid = _key(session_id)
-        current = _pages.get(sid, 1)
-        new_page = max(1, min(total_pages, current + delta))
-        changed = new_page != current
-        _pages[sid] = new_page
+    from instruction_presenter.models import InstructionSession
+
+    with transaction.atomic():
+        session = InstructionSession.objects.select_for_update().get(pk=_key(session_id))
+        new_page = max(1, min(total_pages, session.current_page + delta))
+        changed = new_page != session.current_page
+        session.current_page = new_page
+        update_fields = ['current_page', 'updated_at']
         if changed:
-            _clocks.pop(sid, None)
+            _write_clock(session, None)
+            update_fields.extend(['media_playing', 'media_position', 'media_anchor'])
+        session.save(update_fields=update_fields)
         return new_page, changed
 
 
-async def reset_page(session_id: str) -> None:
-    with _lock:
-        sid = _key(session_id)
-        _pages[sid] = 1
-        _clocks.pop(sid, None)
+def reset_page(session_id: str) -> None:
+    from instruction_presenter.models import InstructionSession
+
+    with transaction.atomic():
+        session = InstructionSession.objects.select_for_update().get(pk=_key(session_id))
+        session.current_page = 1
+        _write_clock(session, None)
+        session.save(
+            update_fields=[
+                'current_page',
+                'media_playing',
+                'media_position',
+                'media_anchor',
+                'updated_at',
+            ]
+        )
 
 
 def get_current_page_sync(session_id: str) -> int:
-    """Read last known page for HTTP views (best-effort, same worker only)."""
-    with _lock:
-        return _pages.get(_key(session_id), 1)
+    """Read last known page for HTTP views."""
+    return get_current_page(session_id)
 
 
 def register_subject(session_id: str, player_key: str, channel_name: str) -> None:
@@ -171,32 +245,41 @@ def _media_position_at(clock: MediaClock, moment: float) -> float:
 
 
 def clear_media_clock(session_id: str) -> None:
-    with _lock:
-        _clocks.pop(_key(session_id), None)
+    session = _get_session(session_id)
+    if session is None:
+        return
+    _write_clock(session, None)
 
 
 def get_media_clock(session_id: str) -> MediaClock | None:
-    with _lock:
-        return _clocks.get(_key(session_id))
+    session = _get_session(session_id)
+    if session is None:
+        return None
+    return _clock_from_session(session)
 
 
 def begin_playback(session_id: str, now: float | None = None) -> dict:
     """Arm a shared play. Position is the media time clients should show at play_at."""
+    from instruction_presenter.models import InstructionSession
+
     moment = time.time() if now is None else now
     play_at = moment + PLAY_LEAD_SECONDS
-    sid = _key(session_id)
-    with _lock:
-        clock = _clocks.get(sid)
+    with transaction.atomic():
+        session = InstructionSession.objects.select_for_update().get(pk=_key(session_id))
+        clock = _clock_from_session(session)
         if clock is None:
             position = 0.0
         elif clock.playing:
             position = _media_position_at(clock, play_at)
         else:
             position = max(0.0, clock.position)
-        _clocks[sid] = MediaClock(
-            playing=True,
-            position=position,
-            anchor_server_time=play_at,
+        _write_clock(
+            session,
+            MediaClock(
+                playing=True,
+                position=position,
+                anchor_server_time=play_at,
+            ),
         )
     return {
         'type': 'media_command',
@@ -209,15 +292,20 @@ def begin_playback(session_id: str, now: float | None = None) -> dict:
 
 def pause_playback(session_id: str, now: float | None = None) -> dict:
     """Stop the shared clock and report the media time at this instant."""
+    from instruction_presenter.models import InstructionSession
+
     moment = time.time() if now is None else now
-    sid = _key(session_id)
-    with _lock:
-        clock = _clocks.get(sid)
+    with transaction.atomic():
+        session = InstructionSession.objects.select_for_update().get(pk=_key(session_id))
+        clock = _clock_from_session(session)
         position = 0.0 if clock is None else _media_position_at(clock, moment)
-        _clocks[sid] = MediaClock(
-            playing=False,
-            position=position,
-            anchor_server_time=moment,
+        _write_clock(
+            session,
+            MediaClock(
+                playing=False,
+                position=position,
+                anchor_server_time=moment,
+            ),
         )
     return {
         'type': 'media_command',
@@ -234,33 +322,29 @@ def media_command_for_join(session_id: str, now: float | None = None) -> dict | 
     A pause at the start has no snapshot. A later pause seeks the joiner to that frame.
     """
     moment = time.time() if now is None else now
-    with _lock:
-        clock = _clocks.get(_key(session_id))
-        if clock is None:
-            return None
-        if clock.playing:
-            play_at = moment + PLAY_LEAD_SECONDS
-            return {
-                'type': 'media_command',
-                'command': 'play',
-                'position': _media_position_at(clock, play_at),
-                'server_time': moment,
-                'play_at': play_at,
-            }
-        if clock.position <= 0:
-            return None
+    clock = get_media_clock(session_id)
+    if clock is None:
+        return None
+    if clock.playing:
+        play_at = moment + PLAY_LEAD_SECONDS
         return {
             'type': 'media_command',
-            'command': 'pause',
-            'position': clock.position,
+            'command': 'play',
+            'position': _media_position_at(clock, play_at),
             'server_time': moment,
+            'play_at': play_at,
         }
+    if clock.position <= 0:
+        return None
+    return {
+        'type': 'media_command',
+        'command': 'pause',
+        'position': clock.position,
+        'server_time': moment,
+    }
 
 
 def clear_ephemeral_state() -> None:
-    """Reset in-process session data. Used by tests."""
+    """Reset in-process subject presence. Used by tests."""
     with _lock:
-        _pages.clear()
-        _clocks.clear()
-        _sessions.clear()
         _subjects.clear()
