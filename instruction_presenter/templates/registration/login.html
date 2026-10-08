@@ -4,7 +4,11 @@
 <div class="row justify-content-center">
     <div class="col-md-6 col-lg-4">
         <h1 class="h3 mb-4">Staff sign in</h1>
-        {% if form.errors %}
+        {% if login_error %}
+        <div class="alert alert-danger" role="alert">
+            {{ login_error }}
+        </div>
+        {% elif form.errors %}
         <div class="alert alert-danger" role="alert">
             Username or password was not recognized.
         </div>

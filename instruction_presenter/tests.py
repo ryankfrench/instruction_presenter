@@ -1,4 +1,5 @@
 from urllib.parse import parse_qs, urlsplit
+from unittest.mock import Mock, patch
 from uuid import UUID, uuid4
 
 from asgiref.sync import async_to_sync
@@ -6,14 +7,16 @@ from channels.db import database_sync_to_async
 from channels.routing import URLRouter
 from django.contrib.auth.models import User
 from django.core.cache import cache
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
+from instruction_presenter.auth_views import RATE_LIMIT_MESSAGE
 from instruction_presenter.manifest import (
     InstructionManifest,
     get_cached_manifest,
     set_cached_manifest,
 )
+from instruction_presenter.models import LoginAttempt
 from instruction_presenter.routing import websocket_urlpatterns
 from instruction_presenter.session_state import (
     PLAY_LEAD_SECONDS,
@@ -705,3 +708,187 @@ class VideoReadyCountTests(TestCase):
         await status.disconnect()
         await subject_a.disconnect()
         await staff.disconnect()
+
+
+_ESI_SETTINGS = {
+    'ESI_AUTH_URL': 'https://esi.example',
+    'ESI_AUTH_APP': 'Instruction Presenter',
+    'ESI_AUTH_USERNAME': 'svc-user',
+    'ESI_AUTH_PASS': 'svc-pass',
+    'ESI_AUTH_CLIENT_ID': 'client-id',
+    'ESI_AUTH_CLIENT_SECRET': 'client-secret',
+}
+_ESI_BLANK = {name: '' for name in _ESI_SETTINGS}
+
+
+def _http_response(status_code, payload):
+    response = Mock()
+    response.status_code = status_code
+    response.json.return_value = payload
+    return response
+
+
+class StaffLoginTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.user = User.objects.create_user(
+            'staffer',
+            email='staffer@example.edu',
+            password='secret-pass',
+        )
+
+    @override_settings(**_ESI_BLANK)
+    @patch('instruction_presenter.esi_auth.requests.get', side_effect=AssertionError('ESI called'))
+    @patch('instruction_presenter.esi_auth.requests.post', side_effect=AssertionError('ESI called'))
+    def test_local_password_signs_in_when_esi_is_not_configured(self, post, get):
+        response = self.client.post(
+            reverse('login'),
+            {'username': 'staffer', 'password': 'secret-pass'},
+        )
+        self.assertRedirects(response, reverse('instruction_presenter:staff_index'))
+        self.assertEqual(int(self.client.session['_auth_user_id']), self.user.pk)
+        post.assert_not_called()
+        get.assert_not_called()
+
+    @override_settings(**_ESI_SETTINGS)
+    @patch('instruction_presenter.esi_auth.requests.get')
+    @patch('instruction_presenter.esi_auth.requests.post')
+    def test_esi_failure_falls_back_to_local_password(self, post, get):
+        post.return_value = _http_response(
+            200,
+            {
+                'access_token': 'access-token',
+                'refresh_token': 'refresh-token',
+                'expires_in': 3600,
+            },
+        )
+        get.return_value = _http_response(200, {'status': 'fail'})
+
+        response = self.client.post(
+            reverse('login'),
+            {'username': 'staffer', 'password': 'secret-pass'},
+        )
+
+        self.assertRedirects(response, reverse('instruction_presenter:staff_index'))
+        self.assertEqual(int(self.client.session['_auth_user_id']), self.user.pk)
+        self.assertEqual(get.call_args.kwargs['json']['password'], 'secret-pass')
+        self.assertEqual(post.call_args.kwargs['data']['password'], 'svc-pass')
+
+    @override_settings(**_ESI_SETTINGS)
+    @patch('instruction_presenter.esi_auth.requests.get')
+    @patch('instruction_presenter.esi_auth.requests.post')
+    def test_esi_profile_creates_a_session(self, post, get):
+        post.return_value = _http_response(
+            200,
+            {
+                'access_token': 'access-token',
+                'refresh_token': 'refresh-token',
+                'expires_in': 3600,
+            },
+        )
+        get.return_value = _http_response(
+            200,
+            {
+                'profile': {
+                    'global_id': 'esi-global-1',
+                    'email': 'Ada@Example.edu',
+                    'first_name': 'Ada',
+                    'last_name': 'Lovelace',
+                },
+            },
+        )
+
+        response = self.client.post(
+            reverse('login'),
+            {'username': 'Ada@Example.edu', 'password': 'esi-secret'},
+        )
+
+        self.assertRedirects(response, reverse('instruction_presenter:staff_index'))
+        created = User.objects.get(username='esi-global-1')
+        self.assertEqual(created.email, 'Ada@example.edu')
+        self.assertEqual(created.first_name, 'Ada')
+        self.assertEqual(created.last_name, 'Lovelace')
+        self.assertEqual(int(self.client.session['_auth_user_id']), created.pk)
+        self.assertFalse(created.check_password('esi-secret'))
+        self.assertEqual(get.call_args.kwargs['json']['username'], 'ada@example.edu')
+        self.assertEqual(
+            get.call_args.kwargs['headers']['Authorization'],
+            'Bearer access-token',
+        )
+        self.assertTrue(
+            created.login_attempts.filter(success=True).exists()
+        )
+
+    @override_settings(**_ESI_SETTINGS)
+    @patch('instruction_presenter.esi_auth.requests.get')
+    @patch('instruction_presenter.esi_auth.requests.post')
+    def test_esi_profile_refuses_an_email_already_in_use(self, post, get):
+        post.return_value = _http_response(
+            200,
+            {
+                'access_token': 'access-token',
+                'refresh_token': 'refresh-token',
+                'expires_in': 3600,
+            },
+        )
+        get.return_value = _http_response(
+            200,
+            {
+                'profile': {
+                    'global_id': 'esi-other',
+                    'email': 'staffer@example.edu',
+                    'first_name': 'Other',
+                    'last_name': 'Person',
+                },
+            },
+        )
+
+        response = self.client.post(
+            reverse('login'),
+            {'username': 'staffer', 'password': 'secret-pass'},
+        )
+
+        self.assertContains(response, 'Username or password was not recognized')
+        self.assertNotIn('_auth_user_id', self.client.session)
+        self.assertFalse(User.objects.filter(username='esi-other').exists())
+        self.assertTrue(
+            self.user.login_attempts.filter(success=False, note='Email already exists').exists()
+        )
+
+    @override_settings(**_ESI_SETTINGS)
+    @patch('instruction_presenter.esi_auth.requests.get')
+    @patch('instruction_presenter.esi_auth.requests.post')
+    def test_blocks_after_more_than_five_failures_in_a_minute(self, post, get):
+        post.return_value = _http_response(
+            200,
+            {
+                'access_token': 'access-token',
+                'refresh_token': 'refresh-token',
+                'expires_in': 3600,
+            },
+        )
+        get.return_value = _http_response(200, {'status': 'fail'})
+
+        for _ in range(6):
+            response = self.client.post(
+                reverse('login'),
+                {'username': 'staffer', 'password': 'wrong'},
+            )
+            self.assertContains(response, 'Username or password was not recognized')
+
+        post.reset_mock()
+        get.reset_mock()
+        response = self.client.post(
+            reverse('login'),
+            {'username': 'staffer', 'password': 'secret-pass'},
+        )
+
+        self.assertContains(response, RATE_LIMIT_MESSAGE)
+        self.assertNotIn('_auth_user_id', self.client.session)
+        self.assertEqual(
+            LoginAttempt.objects.filter(user=self.user, success=False).count(),
+            6,
+        )
+        post.assert_not_called()
+        get.assert_not_called()
+
