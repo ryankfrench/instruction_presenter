@@ -12,6 +12,7 @@ from instruction_presenter.session_state import (
     media_command_for_join,
     pause_playback,
     unregister_session,
+    video_ready_counts,
 )
 
 
@@ -23,6 +24,7 @@ class StaffConsumer(AsyncWebsocketConsumer):
         await self.channel_layer.group_add(self.group_name, self.channel_name)
         await self.accept()
         await self.send_join_media()
+        await self.send_video_ready_counts()
 
     async def disconnect(self, close_code):
         await self.channel_layer.group_discard(self.group_name, self.channel_name)
@@ -117,6 +119,20 @@ class StaffConsumer(AsyncWebsocketConsumer):
         if payload:
             await self.send(text_data=json.dumps(payload))
 
+    async def send_video_ready_counts(self):
+        if not await self.current_page_is_video():
+            return
+        enabled, total = video_ready_counts(self.session_id)
+        await self.send(
+            text_data=json.dumps(
+                {
+                    'type': 'video_enabled',
+                    'enabled': enabled,
+                    'total': total,
+                }
+            )
+        )
+
     async def send_update_page(self, page_number):
         await self.channel_layer.group_send(
             self.group_name,
@@ -160,8 +176,11 @@ class StaffConsumer(AsyncWebsocketConsumer):
         await self.send(text_data=json.dumps(message))
 
     async def presence_changed(self, event):
-        """Subject connect and disconnect notices are for the status page."""
-        return
+        """Subject connect and disconnect update the ready count on video pages."""
+        await self.send_video_ready_counts()
+
+    async def video_enabled(self, event):
+        await self.send_video_ready_counts()
 
     async def close_subject(self, event):
         """Close-tab commands are delivered to subject screens."""

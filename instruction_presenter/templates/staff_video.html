@@ -59,6 +59,7 @@ html, body {
         <div class="col text-center d-flex justify-content-center align-items-center gap-2 flex-wrap">
             <button id="play-btn" type="button" class="btn btn-secondary">Play</button>
             <button id="pause-btn" type="button" class="btn btn-secondary">Pause</button>
+            <span id="video-ready-count">Ready for Video: 0/0</span>
         </div>
         <div class="col text-end">
             <button id="next-btn" class="btn btn-primary" {% if current_page >= total_pages %}disabled{% endif %}>
@@ -113,6 +114,9 @@ html, body {
         const data = JSON.parse(e.data);
         if (data.type === 'update_page') {
             window.location.reload();
+        } else if (data.type === 'video_enabled') {
+            document.getElementById('video-ready-count').textContent =
+                `Ready for Video: ${data.enabled}/${data.total}`;
         } else if (data.type === 'media_command') {
             applyMediaCommand(data);
         } else if (data.type === 'end_instructions') {

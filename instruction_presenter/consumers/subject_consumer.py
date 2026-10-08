@@ -10,6 +10,7 @@ from instruction_presenter.manifest import (
 )
 from instruction_presenter.session_state import (
     get_current_page,
+    mark_subject_video_enabled,
     media_command_for_join,
     register_subject,
     unregister_subject,
@@ -40,9 +41,24 @@ class SubjectConsumer(AsyncWebsocketConsumer):
         )
 
     async def receive(self, text_data):
-        pass
+        try:
+            data = json.loads(text_data)
+        except json.JSONDecodeError:
+            return
+        if data.get('action') != 'video_enabled':
+            return
+        if not mark_subject_video_enabled(self.session_id, self.channel_name):
+            return
+        await self.channel_layer.group_send(
+            self.group_name,
+            {'type': 'video_enabled'},
+        )
 
     async def presence_changed(self, event):
+        return
+
+    async def video_enabled(self, event):
+        """Ready counts are delivered to the presenter."""
         return
 
     async def close_subject(self, event):

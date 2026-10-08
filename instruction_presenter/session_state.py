@@ -29,6 +29,7 @@ def _key(session_id: str) -> str:
 class SubjectLink:
     player_key: str
     connected_at: float
+    video_enabled: bool = False
 
 
 @dataclass(frozen=True)
@@ -119,6 +120,28 @@ def unregister_subject(session_id: str, channel_name: str) -> None:
 def subject_connection_count(session_id: str) -> int:
     with _lock:
         return len(_subjects.get(_key(session_id), {}))
+
+
+def mark_subject_video_enabled(session_id: str, channel_name: str) -> bool:
+    """Mark one subject screen ready to play. Returns False if that screen is gone."""
+    with _lock:
+        links = _subjects.get(_key(session_id))
+        if not links or channel_name not in links:
+            return False
+        link = links[channel_name]
+        links[channel_name] = SubjectLink(
+            player_key=link.player_key,
+            connected_at=link.connected_at,
+            video_enabled=True,
+        )
+        return True
+
+
+def video_ready_counts(session_id: str) -> tuple[int, int]:
+    """Return (ready screens, connected subject screens)."""
+    with _lock:
+        links = list(_subjects.get(_key(session_id), {}).values())
+    return sum(1 for link in links if link.video_enabled), len(links)
 
 
 def list_subject_groups(session_id: str) -> list[dict]:

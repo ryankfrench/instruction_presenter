@@ -308,12 +308,14 @@ class VideoPageTests(TestCase):
         self.assertContains(staff, 'id="instruction-video"')
         self.assertContains(staff, 'intro.mp4')
         self.assertContains(staff, 'Click to enable video')
+        self.assertContains(staff, 'Ready for Video: 0/0')
         self.assertContains(staff, 'id="play-btn"')
         self.assertNotContains(staff, 'pdf.min.js')
         self.assertNotContains(staff, 'Read Aloud')
         self.assertContains(subject, 'id="instruction-video"')
         self.assertContains(subject, 'intro.mp4')
-        self.assertContains(subject, 'Click to enable video')
+        self.assertContains(subject, 'Ready to play video')
+        self.assertNotContains(subject, 'Click to enable video')
         self.assertNotContains(subject, 'id="play-btn"')
         self.assertNotContains(subject, 'pdf.min.js')
 
@@ -540,6 +542,10 @@ class VideoSyncSocketTests(TestCase):
         self.assertTrue((await staff.connect())[0])
         self.assertTrue((await status.connect())[0])
         await status.receive_json_from()
+        ready = await staff.receive_json_from()
+        self.assertEqual(ready['type'], 'video_enabled')
+        self.assertEqual(ready['enabled'], 0)
+        self.assertEqual(ready['total'], 1)
 
         await staff.send_json_to({'action': 'play_media'})
         staff_play = await staff.receive_json_from()
@@ -556,11 +562,17 @@ class VideoSyncSocketTests(TestCase):
         self.assertTrue(await status.receive_nothing(timeout=0.1))
 
         await subject.disconnect()
+        left = await staff.receive_json_from()
+        self.assertEqual(left['type'], 'video_enabled')
+        self.assertEqual(left['total'], 0)
         subject = WebsocketCommunicator(
             _ws_application,
             f'/ws/instructions/{self.session_id}/{self.player_key}/',
         )
         self.assertTrue((await subject.connect())[0])
+        returned = await staff.receive_json_from()
+        self.assertEqual(returned['type'], 'video_enabled')
+        self.assertEqual(returned['total'], 1)
         joined = await subject.receive_json_from()
         self.assertEqual(joined['type'], 'media_command')
         self.assertEqual(joined['command'], 'play')
@@ -584,4 +596,80 @@ class VideoSyncSocketTests(TestCase):
 
         await status.disconnect()
         await subject.disconnect()
+        await staff.disconnect()
+
+
+class VideoReadyCountTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        clear_ephemeral_state()
+        self.session_id = str(uuid4())
+        self.player_a = str(uuid4())
+        self.player_b = str(uuid4())
+        set_cached_manifest(
+            self.session_id,
+            InstructionManifest(
+                base_url='https://localhost/static/deck/',
+                files=('intro.mp4',),
+                complete_url='',
+                staff_complete_url=None,
+            ),
+        )
+
+    def test_ready_count_tracks_subject_screens(self):
+        async_to_sync(self._exercise)()
+
+    async def _exercise(self):
+        from channels.testing import WebsocketCommunicator
+
+        status = WebsocketCommunicator(
+            _ws_application,
+            f'/ws/instructions/{self.session_id}/status/',
+        )
+        subject_a = WebsocketCommunicator(
+            _ws_application,
+            f'/ws/instructions/{self.session_id}/{self.player_a}/',
+        )
+        subject_b = WebsocketCommunicator(
+            _ws_application,
+            f'/ws/instructions/{self.session_id}/{self.player_b}/',
+        )
+        staff = WebsocketCommunicator(
+            _ws_application,
+            f'/ws/instructions/{self.session_id}/',
+        )
+        self.assertTrue((await status.connect())[0])
+        await status.receive_json_from()
+        self.assertTrue((await staff.connect())[0])
+        initial = await staff.receive_json_from()
+        self.assertEqual(initial['type'], 'video_enabled')
+        self.assertEqual(initial['enabled'], 0)
+        self.assertEqual(initial['total'], 0)
+
+        self.assertTrue((await subject_a.connect())[0])
+        after_a = await staff.receive_json_from()
+        await status.receive_json_from()
+        self.assertEqual(after_a['enabled'], 0)
+        self.assertEqual(after_a['total'], 1)
+
+        self.assertTrue((await subject_b.connect())[0])
+        after_b = await staff.receive_json_from()
+        await status.receive_json_from()
+        self.assertEqual(after_b['enabled'], 0)
+        self.assertEqual(after_b['total'], 2)
+
+        await subject_a.send_json_to({'action': 'video_enabled'})
+        ready = await staff.receive_json_from()
+        self.assertEqual(ready['type'], 'video_enabled')
+        self.assertEqual(ready['enabled'], 1)
+        self.assertEqual(ready['total'], 2)
+        self.assertTrue(await status.receive_nothing(timeout=0.1))
+
+        await subject_b.disconnect()
+        remaining = await staff.receive_json_from()
+        self.assertEqual(remaining['enabled'], 1)
+        self.assertEqual(remaining['total'], 1)
+
+        await status.disconnect()
+        await subject_a.disconnect()
         await staff.disconnect()

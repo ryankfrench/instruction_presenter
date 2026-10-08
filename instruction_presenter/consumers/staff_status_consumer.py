@@ -76,3 +76,7 @@ class StaffStatusConsumer(AsyncWebsocketConsumer):
     async def media_command(self, event):
         """Play and pause commands are for presenter and subject screens."""
         return
+
+    async def video_enabled(self, event):
+        """Ready counts are delivered to the presenter."""
+        return

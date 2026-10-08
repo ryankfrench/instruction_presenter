@@ -54,7 +54,7 @@ html, body {
         <div class="col">
             <video id="instruction-video" src="{{ current_file }}" preload="auto" playsinline></video>
             <div id="enable-video" class="enable-overlay">
-                <button type="button" class="btn btn-primary btn-lg" id="enable-video-btn">Click to enable video</button>
+                <button type="button" class="btn btn-primary btn-lg" id="enable-video-btn">Ready to play video</button>
             </div>
         </div>
     </div>
@@ -145,6 +145,7 @@ html, body {
             console.error('Could not enable video', err);
         }
         videoEnabled = true;
+        reportVideoEnabled();
         const command = pendingCommand;
         pendingCommand = null;
         if (command) {
@@ -154,8 +155,19 @@ html, body {
         }
     });
 
+    function reportVideoEnabled() {
+        if (!videoEnabled || !socket || socket.readyState !== WebSocket.OPEN) {
+            return;
+        }
+        socket.send(JSON.stringify({ action: 'video_enabled' }));
+    }
+
     function connectWebSocket() {
         socket = new WebSocket(`${ws_scheme}://${window.location.host}/ws/instructions/${sessionId}/${playerKey}/`);
+
+        socket.onopen = function() {
+            reportVideoEnabled();
+        };
 
         socket.onmessage = function(event) {
             const data = JSON.parse(event.data);
