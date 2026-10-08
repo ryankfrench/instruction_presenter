@@ -69,6 +69,7 @@ html, body {
 
     let isPageChange = false;
     let socket = null;
+    let reconnectTimer = null;
     const video = document.getElementById('instruction-video');
     const enableOverlay = document.getElementById('enable-video');
     let videoEnabled = false;
@@ -199,12 +200,20 @@ html, body {
 
         socket.onclose = function() {
             if (!isPageChange) {
-                setTimeout(connectWebSocket, 1000);
+                reconnectTimer = setTimeout(connectWebSocket, 1000);
             }
         };
 
         return socket;
     }
+
+    window.addEventListener('pagehide', () => {
+        isPageChange = true;
+        clearTimeout(reconnectTimer);
+        if (socket && socket.readyState < WebSocket.CLOSING) {
+            socket.close();
+        }
+    });
 
     connectWebSocket();
 </script>
