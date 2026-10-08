@@ -1,0 +1,27 @@
+# Local Django settings (SECRET_KEY, DB password, API keys)
+local_settings.py
+
+# Deployed Azure / IAC secrets (keep *_sample.json visible)
+iac/secrets.json
+iac/environment_variables.json
+
+# Environment files
+.env
+.env.*
+*.env
+
+# Virtualenvs that may contain local config
+_project_env/
+_multi_user_socket_template_env/
+
+# Database dumps can contain user data
+database_dumps/
+
+# Keys, certs, and credential dumps
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+credentials.json
+secrets.json

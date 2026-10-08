@@ -16,27 +16,13 @@ from instruction_presenter.manifest import (
 from instruction_presenter.session_state import (
     get_current_page_sync,
     list_subject_groups,
-    registered_sessions,
     subject_connection_count,
-    unregister_session,
 )
 
 
 def format_timestamp(timestamp: float) -> str:
     moment = datetime.fromtimestamp(timestamp, tz=timezone.utc)
     return moment.strftime('%Y-%m-%d %H:%M:%S UTC')
-
-
-def presenter_query(manifest: InstructionManifest) -> str:
-    """Query string that reloads this manifest if the cache entry is gone."""
-    pairs: list[tuple[str, str]] = [('base_url', manifest.base_url)]
-    for filename in manifest.files:
-        pairs.append(('f', filename))
-    if manifest.complete_url:
-        pairs.append(('complete_url', manifest.complete_url))
-    if manifest.staff_complete_url:
-        pairs.append(('staff_complete_url', manifest.staff_complete_url))
-    return urlencode(pairs)
 
 
 def subject_pattern_path(session_id: str, manifest: InstructionManifest) -> str:
@@ -66,14 +52,17 @@ def subject_instructions_path(session_id: str, player_key: str, complete_url: st
 
 
 def index_rows() -> list[dict]:
-    """Sessions whose manifest is still cached. Stale registry entries are dropped."""
+    """Saved instruction sessions, newest first."""
+    from instruction_presenter.models import InstructionSession
+
     rows = []
-    for session_id, registered_at in registered_sessions():
-        manifest = get_cached_manifest(session_id)
+    for session in InstructionSession.objects.order_by('-created_at'):
+        manifest = get_cached_manifest(str(session.id))
         if manifest is None or manifest.total_pages == 0:
-            unregister_session(session_id)
             continue
-        page = min(max(get_current_page_sync(session_id), 1), manifest.total_pages)
+        session_id = str(session.id)
+        registered_at = session.created_at.timestamp()
+        page = min(max(session.current_page, 1), manifest.total_pages)
         rows.append(
             {
                 'session_id': session_id,
@@ -82,9 +71,8 @@ def index_rows() -> list[dict]:
                 'current_page': page,
                 'total_pages': manifest.total_pages,
                 'subject_count': subject_connection_count(session_id),
-                'presenter_path': (
-                    f"{reverse('instruction_presenter:staff_home', args=[session_id])}"
-                    f'?{presenter_query(manifest)}'
+                'presenter_path': reverse(
+                    'instruction_presenter:staff_home', args=[session_id]
                 ),
                 'status_path': reverse(
                     'instruction_presenter:staff_status', args=[session_id]
@@ -94,7 +82,6 @@ def index_rows() -> list[dict]:
                 'base_url': manifest.base_url,
             }
         )
-    rows.sort(key=lambda row: row['registered_at'], reverse=True)
     return rows
 
 

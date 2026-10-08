@@ -8,8 +8,9 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.2.3/css/bootstrap.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
     {% block head %}{% endblock %}
 </head>
-<body style="font-size:20px">
+<body {% block body_attrs %}style="font-size:20px"{% endblock %}>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.2.3/js/bootstrap.bundle.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    {% block banner %}{% endblock %}
     <div class="container-fluid mt-4 mb-4">
         {% block content %}{% endblock %}
         {% block tail %}{% endblock %}

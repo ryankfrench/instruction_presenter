@@ -1,3 +1,7 @@
 Django>=5.0,<6
 channels>=4.0,<5
+channels-redis>=4.2,<5
 daphne>=4.0,<5
+psycopg[binary]>=3.1,<4
+whitenoise>=6.6,<7
+requests>=2.31,<3
