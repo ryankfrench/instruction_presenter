@@ -128,7 +128,7 @@ def _record(user, *, success: bool, note: str = '') -> None:
 
 def _user_from_esi_profile(profile: dict):
     global_id = str(profile.get('global_id') or '').strip()
-    email = str(profile.get('email') or '').strip()
+    email = str(profile.get('email') or '').strip().lower()
     if not global_id or not email or len(global_id) > 150:
         logger.warning('ESI auth profile was missing a usable id or email')
         raise _EsiAccountRejected('Unusable ESI profile')

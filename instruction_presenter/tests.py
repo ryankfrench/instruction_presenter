@@ -805,7 +805,7 @@ class StaffLoginTests(TestCase):
 
         self.assertRedirects(response, reverse('instruction_presenter:staff_index'))
         created = User.objects.get(username='esi-global-1')
-        self.assertEqual(created.email, 'Ada@example.edu')
+        self.assertEqual(created.email, 'ada@example.edu')
         self.assertEqual(created.first_name, 'Ada')
         self.assertEqual(created.last_name, 'Lovelace')
         self.assertEqual(int(self.client.session['_auth_user_id']), created.pk)
