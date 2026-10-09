@@ -1,8 +1,8 @@
 """ESI auth service client.
 
 The app signs in to ESI_AUTH_URL with its service account, then asks get-auth
-whether a staff member may use this app. Missing settings or a failed call
-return None so the login view can fall back to a local password.
+whether a staff member may use this app. The login view tries a local password
+first. Missing settings or a failed call return None.
 """
 
 from __future__ import annotations

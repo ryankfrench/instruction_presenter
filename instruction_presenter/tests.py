@@ -751,19 +751,9 @@ class StaffLoginTests(TestCase):
         get.assert_not_called()
 
     @override_settings(**_ESI_SETTINGS)
-    @patch('instruction_presenter.esi_auth.requests.get')
-    @patch('instruction_presenter.esi_auth.requests.post')
-    def test_esi_failure_falls_back_to_local_password(self, post, get):
-        post.return_value = _http_response(
-            200,
-            {
-                'access_token': 'access-token',
-                'refresh_token': 'refresh-token',
-                'expires_in': 3600,
-            },
-        )
-        get.return_value = _http_response(200, {'status': 'fail'})
-
+    @patch('instruction_presenter.esi_auth.requests.get', side_effect=AssertionError('ESI called'))
+    @patch('instruction_presenter.esi_auth.requests.post', side_effect=AssertionError('ESI called'))
+    def test_local_password_signs_in_without_calling_esi(self, post, get):
         response = self.client.post(
             reverse('login'),
             {'username': 'staffer', 'password': 'secret-pass'},
@@ -771,8 +761,8 @@ class StaffLoginTests(TestCase):
 
         self.assertRedirects(response, reverse('instruction_presenter:staff_index'))
         self.assertEqual(int(self.client.session['_auth_user_id']), self.user.pk)
-        self.assertEqual(get.call_args.kwargs['json']['password'], 'secret-pass')
-        self.assertEqual(post.call_args.kwargs['data']['password'], 'svc-pass')
+        post.assert_not_called()
+        get.assert_not_called()
 
     @override_settings(**_ESI_SETTINGS)
     @patch('instruction_presenter.esi_auth.requests.get')
@@ -845,12 +835,13 @@ class StaffLoginTests(TestCase):
 
         response = self.client.post(
             reverse('login'),
-            {'username': 'staffer', 'password': 'secret-pass'},
+            {'username': 'staffer', 'password': 'esi-secret'},
         )
 
         self.assertContains(response, 'Username or password was not recognized')
         self.assertNotIn('_auth_user_id', self.client.session)
         self.assertFalse(User.objects.filter(username='esi-other').exists())
+        self.assertTrue(self.user.check_password('secret-pass'))
         self.assertTrue(
             self.user.login_attempts.filter(success=False, note='Email already exists').exists()
         )

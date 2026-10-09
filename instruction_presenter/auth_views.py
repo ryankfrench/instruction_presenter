@@ -1,4 +1,4 @@
-"""Staff sign-in: ESI auth first, then a local Django password."""
+"""Staff sign-in: a local Django password, then ESI when that does not match."""
 
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ def login_view(request):
     elif _is_rate_limited(existing):
         login_error = RATE_LIMIT_MESSAGE
     else:
-        signed_in = _login_esi_or_local(request, username, password, existing)
+        signed_in = _login_local_or_esi(request, username, password, existing)
         if signed_in is not None:
             return redirect(_safe_next(request, next_url))
         form.add_error(None, 'Invalid username or password')
@@ -69,24 +69,12 @@ def login_view(request):
     )
 
 
-def _login_esi_or_local(request, username, password, existing):
-    """Sign in via ESI, or a local password when ESI does not accept them.
+def _login_local_or_esi(request, username, password, existing):
+    """Sign in with a local password, or via ESI when that password does not match.
 
     Returns the user on success. None means the form should show an error.
-    An ESI profile that cannot be stored is a refusal, not a local fallback.
+    An ESI profile that cannot be stored is a refusal.
     """
-    profile = fetch_profile(username.lower(), password)
-    if profile is not None:
-        try:
-            user = _user_from_esi_profile(profile)
-        except _EsiAccountRejected as exc:
-            _record(existing, success=False, note=exc.note)
-            return None
-        _record(user, success=True)
-        user.backend = _AUTH_BACKEND
-        login(request, user)
-        return user
-
     user = authenticate(request, username=username, password=password)
     if user is None and existing is not None and existing.get_username() != username:
         user = authenticate(
@@ -96,6 +84,18 @@ def _login_esi_or_local(request, username, password, existing):
         )
     if user is not None:
         _record(user, success=True)
+        login(request, user)
+        return user
+
+    profile = fetch_profile(username.lower(), password)
+    if profile is not None:
+        try:
+            user = _user_from_esi_profile(profile)
+        except _EsiAccountRejected as exc:
+            _record(existing, success=False, note=exc.note)
+            return None
+        _record(user, success=True)
+        user.backend = _AUTH_BACKEND
         login(request, user)
         return user
 
