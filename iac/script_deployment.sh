@@ -24,7 +24,9 @@ az deployment group create \
 az webapp config set \
     --resource-group $resource_group \
     --name $webapp_name \
-    --startup-file startup.sh
+    --startup-file startup.sh \
+    --web-sockets-enabled true \
+    --always-on true
 
 az webapp config storage-account add \
   --resource-group $resource_group \

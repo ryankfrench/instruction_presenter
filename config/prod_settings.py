@@ -28,23 +28,32 @@ DATABASES = {
     },
 }
 
-CHANNEL_LAYERS = {
-    'default': {
-        'BACKEND': 'channels_redis.core.RedisChannelLayer',
-        'CONFIG': {
-            # 'hosts': [(os.environ['REDIS'])],
-            # redis-py 8 defaults socket_timeout to 5s, the same as the
-            # channel layer's blocking pop, so an idle WebSocket is dropped.
-            'hosts': [{
-                'host': 'localhost',
-                'port': 6379,
-                'socket_timeout': None,
-            }],
-            'prefix' : 'instruction_presenter',
-            'capacity': 1500,
+# No Redis runs on the App Service host. In-memory works for the single
+# Daphne process. Set REDIS to a redis:// or rediss:// URL before scaling
+# out to more than one instance.
+_redis_url = os.environ.get('REDIS', '').strip()
+if _redis_url:
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {
+                # redis-py 8 defaults socket_timeout to 5s, the same as the
+                # channel layer's blocking pop, so an idle WebSocket is dropped.
+                'hosts': [{
+                    'address': _redis_url,
+                    'socket_timeout': None,
+                }],
+                'prefix': 'instruction_presenter',
+                'capacity': 1500,
+            },
         },
-    },
-}
+    }
+else:
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels.layers.InMemoryChannelLayer',
+        },
+    }
 
 #logging, log both to console and to file log at the INFO level
 LOGGING = {

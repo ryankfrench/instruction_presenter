@@ -12,6 +12,10 @@ resource appService 'Microsoft.Web/sites@2020-06-01' = {
     siteConfig: {
       linuxFxVersion: linux_fx_version
       http20Enabled: true
+      // Off by default. With this false, the front end rejects the
+      // WebSocket upgrade and the browser reports a failed wss connection.
+      webSocketsEnabled: true
+      alwaysOn: true
     }
     httpsOnly: true
     clientAffinityEnabled: false
